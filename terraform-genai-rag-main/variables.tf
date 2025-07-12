@@ -21,7 +21,8 @@
 
 variable "project_id" {
   type        = string
-  description = "Google Cloud Project ID"
+  description = "The project ID to deploy to."
+  default     = "sara-1-0"
 }
 
 variable "region" {
