@@ -159,9 +159,9 @@ resource "google_cloud_run_service_iam_member" "noauth_frontend" {
 
 
 
-data "google_service_account_id_token" "oidc" {
-  target_audience = google_cloud_run_v2_service.retrieval_service.uri
-}
+#data "google_service_account_id_token" "oidc" {
+#  target_audience = google_cloud_run_v2_service.retrieval_service.uri
+#}
 
 # # Trigger the database init step from the retrieval service
 # # Manual Run: curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" {run_service}/data/import
