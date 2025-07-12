@@ -118,6 +118,7 @@ async def amenities_search(query: str, top_k: int, request: Request):
     return {"results": results}
 
 
+
 @routes.get("/flights")
 async def get_flight(flight_id: int, request: Request):
     ds: datastore.Client = request.app.state.datastore
