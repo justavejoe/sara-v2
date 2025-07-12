@@ -1,7 +1,9 @@
 steps:
 - name: 'hashicorp/terraform:1.5.7'
+  dir: 'terraform-genai-rag-main'  # Add this line
   args: ['init']
 - name: 'hashicorp/terraform:1.5.7'
+  dir: 'terraform-genai-rag-main'  # Add this line
   args: ['apply', '-auto-approve']
 options:
   logging: CLOUD_LOGGING_ONLY
