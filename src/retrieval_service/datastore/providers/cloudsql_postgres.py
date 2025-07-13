@@ -1,29 +1,12 @@
-# Copyright 2024 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import asyncio
 from typing import Literal
-
 import asyncpg
 from google.cloud.sql.connector import Connector, IPTypes
 from pgvector.asyncpg import register_vector
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-
 from .. import datastore
-
 
 class Config(BaseModel, datastore.AbstractConfig):
     kind: Literal["cloudsql-postgres"]
@@ -33,7 +16,6 @@ class Config(BaseModel, datastore.AbstractConfig):
     user: str
     password: str
     database: str
-
 
 class Client(datastore.Client[Config]):
     __pool: AsyncEngine
@@ -48,7 +30,6 @@ class Client(datastore.Client[Config]):
     @classmethod
     async def create(cls, config: Config) -> "Client":
         loop = asyncio.get_running_loop()
-
         async def getconn() -> asyncpg.Connection:
             async with Connector(loop=loop) as connector:
                 conn: asyncpg.Connection = await connector.connect_async(
@@ -62,18 +43,13 @@ class Client(datastore.Client[Config]):
             await conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
             await register_vector(conn)
             return conn
-
-        pool = create_async_engine(
-            "postgresql+asyncpg://",
-            async_creator=getconn,
-        )
+        pool = create_async_engine("postgresql+asyncpg://", async_creator=getconn)
         if pool is None:
             raise TypeError("pool not instantiated")
         return cls(pool)
 
     async def initialize_data(self) -> None:
         import pandas as pd
-        
         try:
             processed_papers_df = pd.read_csv("./data/processed_papers.csv")
             paper_chunks = processed_papers_df.to_dict('records')
