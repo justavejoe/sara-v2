@@ -1,7 +1,22 @@
 steps:
+# Step 1: Build the backend Docker image using our source code
+- name: 'gcr.io/kaniko-project/executor:latest'
+  id: 'build-backend'
+  args:
+  - --dockerfile=src/retrieval_service/Dockerfile
+  - --context=src/retrieval_service
+  - --destination=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/retrieval-service:$SHORT_SHA
+  - --cache=true
+
+# Step 2: Apply Terraform, passing the newly built image as a variable
 - name: 'hashicorp/terraform:1.5.7'
-  args: ['init']
-- name: 'hashicorp/terraform:1.5.7'
-  args: ['apply', '-auto-approve']
+  id: 'terraform-apply'
+  entrypoint: 'sh'
+  args:
+    - -c
+    - |
+      terraform init
+      terraform apply -auto-approve -var="retrieval_container=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/retrieval-service:$SHORT_SHA"
+
 options:
   logging: CLOUD_LOGGING_ONLY

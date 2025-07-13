@@ -58,7 +58,6 @@ class Client(datastore.Client[Config]):
         async def getconn() -> asyncpg.Connection:
             async with Connector(loop=loop) as connector:
                 conn: asyncpg.Connection = await connector.connect_async(
-                    # Cloud SQL instance connection name
                     f"{config.project}:{config.region}:{config.instance}",
                     "asyncpg",
                     user=f"{config.user}",
@@ -66,7 +65,6 @@ class Client(datastore.Client[Config]):
                     db=f"{config.database}",
                     ip_type=IPTypes.PSC,
                 )
-            await conn.execute('CREATE EXTENSION IF NOT EXISTS google_ml_integration')
             await conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
             await register_vector(conn)
             return conn
@@ -79,79 +77,52 @@ class Client(datastore.Client[Config]):
             raise TypeError("pool not instantiated")
         return cls(pool)
 
-async def initialize_data(self) -> None:
-    # For simplicity, we'll read the processed CSV here.
-    # In a larger app, this might be passed as an argument.
-    import pandas as pd
+    async def initialize_data(self) -> None:
+        import pandas as pd
+        processed_papers_df = pd.read_csv("./data/processed_papers.csv")
+        paper_chunks = processed_papers_df.to_dict('records')
 
-    processed_papers_df = pd.read_csv("./data/processed_papers.csv")
-    # Convert to list of dictionaries for insertion
-    paper_chunks = processed_papers_df.to_dict('records')
-
-    async with self.__pool.connect() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # If the table already exists, drop it to avoid conflicts
-        await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))
-        # Create our new table
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE paper_chunks(
-                  id SERIAL PRIMARY KEY,
-                  paper_id TEXT,
-                  chunk_id INT,
-                  content TEXT NOT NULL,
-                  embedding vector(768) NOT NULL
+        async with self.__pool.connect() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE paper_chunks(
+                      id SERIAL PRIMARY KEY,
+                      paper_id TEXT,
+                      chunk_id INT,
+                      content TEXT NOT NULL,
+                      embedding vector(768) NOT NULL
+                    )
+                    """
                 )
+            )
+            await conn.execute(
+                text(
+                    """INSERT INTO paper_chunks (paper_id, chunk_id, content, embedding) VALUES (:paper_id, :chunk_id, :content, :embedding)"""
+                ),
+                paper_chunks
+            )
+            await conn.commit()
+
+    async def search_documents(
+        self, query_embedding: list[float], top_k: int
+    ) -> list[dict]:
+        async with self.__pool.connect() as conn:
+            s = text(
+                """
+                SELECT paper_id, content, 1 - (embedding <=> :query_embedding) AS similarity
+                FROM paper_chunks
+                ORDER BY similarity DESC
+                LIMIT :top_k
                 """
             )
-        )
-        # Insert all the data
-        await conn.execute(
-            text(
-                """INSERT INTO paper_chunks (paper_id, chunk_id, content, embedding) VALUES (:paper_id, :chunk_id, :content, :embedding)"""
-            ),
-            paper_chunks
-        )
-        await conn.commit()
-async def search_documents(
-    self, query_embedding: list[float], top_k: int
-) -> list[dict]:
-    async with self.__pool.connect() as conn:
-        s = text(
-            """
-            SELECT paper_id, content, 1 - (embedding <=> :query_embedding) AS similarity
-            FROM paper_chunks
-            ORDER BY similarity DESC
-            LIMIT :top_k
-            """
-        )
-        params = {
-            "query_embedding": query_embedding,
-            "top_k": top_k,
-        }
-        results = (await conn.execute(s, params)).mappings().fetchall()
-
-    return [dict(r) for r in results]
-    async def insert_ticket(
-        self,
-        user_id: str,
-        user_name: str,
-        user_email: str,
-        airline: str,
-        flight_number: str,
-        departure_airport: str,
-        arrival_airport: str,
-        departure_time: str,
-        arrival_time: str,
-    ):
-        raise NotImplementedError("Not Implemented")
-
-    async def list_tickets(
-        self,
-        user_id: str,
-    ) -> list[models.Ticket]:
-        raise NotImplementedError("Not Implemented")
+            params = {
+                "query_embedding": query_embedding,
+                "top_k": top_k,
+            }
+            results = (await conn.execute(s, params)).mappings().fetchall()
+        return [dict(r) for r in results]
 
     async def close(self):
         await self.__pool.dispose()
