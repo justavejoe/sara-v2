@@ -4,6 +4,7 @@
 **/terraform.tfplan
 credentials.json
 
+
 # Python
 *.pyc
 #*.txt
