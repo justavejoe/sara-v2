@@ -1,22 +1,14 @@
-# Copyright 2024 Google LLC
-# (license header)
-
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI
 from langchain_google_vertexai import VertexAIEmbeddings
-from pydantic import BaseModel
-
-# Explicitly import our concrete datastore implementation
 from datastore.providers import cloudsql_postgres
-
 from .routes import routes
 
 EMBEDDING_MODEL_NAME = "text-embedding-004"
 
 @asynccontextmanager
 async def initialize_datastore(app: FastAPI):
-    # Create a config object from environment variables
     config = cloudsql_postgres.Config(
         kind="cloudsql-postgres",
         project=os.environ.get("DB_PROJECT"),
@@ -26,7 +18,6 @@ async def initialize_datastore(app: FastAPI):
         password=os.environ.get("DB_PASSWORD"),
         database=os.environ.get("DB_NAME"),
     )
-    # Create and assign the datastore client
     app.state.datastore = await cloudsql_postgres.Client.create(config)
     app.state.embed_service = VertexAIEmbeddings(model_name=EMBEDDING_MODEL_NAME)
     yield

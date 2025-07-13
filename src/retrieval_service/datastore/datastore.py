@@ -1,8 +1,5 @@
-# Copyright 2024 Google LLC
-# (license header)
-
 from abc import ABC, abstractmethod
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, TypeVar
 
 class AbstractConfig(ABC):
     kind: str
