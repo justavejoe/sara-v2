@@ -1,4 +1,4 @@
-# Copyright 2023 Google LLC
+# Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,22 +13,16 @@
 # limitations under the License.
 
 import asyncio
-from datetime import datetime
-from typing import Any, Dict, Literal, Optional
+from typing import Literal
 
 import asyncpg
-import sqlalchemy
 from google.cloud.sql.connector import Connector, IPTypes
 from pgvector.asyncpg import register_vector
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-import models
-
 from .. import datastore
-
-POSTGRES_IDENTIFIER = "cloudsql-postgres"
 
 
 class Config(BaseModel, datastore.AbstractConfig):
@@ -79,8 +73,13 @@ class Client(datastore.Client[Config]):
 
     async def initialize_data(self) -> None:
         import pandas as pd
-        processed_papers_df = pd.read_csv("./data/processed_papers.csv")
-        paper_chunks = processed_papers_df.to_dict('records')
+        
+        try:
+            processed_papers_df = pd.read_csv("./data/processed_papers.csv")
+            paper_chunks = processed_papers_df.to_dict('records')
+        except FileNotFoundError:
+            print("NOTE: processed_papers.csv not found. Skipping data initialization.")
+            return
 
         async with self.__pool.connect() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))

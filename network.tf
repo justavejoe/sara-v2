@@ -75,3 +75,24 @@ resource "google_dns_record_set" "psc" {
   managed_zone = google_dns_managed_zone.psc.name
   rrdatas      = [google_compute_address.default.address]
 }
+resource "google_project_service" "service_networking" {
+  project_id = var.project_id
+  service    = "servicenetworking.googleapis.com"
+}
+
+resource "google_compute_global_address" "private_ip_address" {
+  project       = var.project_id
+  name          = "private-ip-for-google-services"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.main.id
+}
+
+resource "google_service_networking_connection" "private_service_access" {
+  network                 = google_compute_network.main.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
+
+  depends_on = [google_project_service.service_networking]
+}
