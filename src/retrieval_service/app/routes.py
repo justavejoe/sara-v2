@@ -9,7 +9,8 @@ async def root():
     return {"message": "SARA Retrieval Service is running"}
 
 @routes.get("/documents/search")
-async def documents_search(query: str, top_k: int = 3, request: Request):
+# AFTER
+async def documents_search(request: Request, query: str, top_k: int = 3):
     ds: datastore.Client = request.app.state.datastore
     embed_service: Embeddings = request.app.state.embed_service
     query_embedding = embed_service.embed_query(query)
