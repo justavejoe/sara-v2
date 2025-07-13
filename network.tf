@@ -76,7 +76,7 @@ resource "google_dns_record_set" "psc" {
   rrdatas      = [google_compute_address.default.address]
 }
 resource "google_project_service" "service_networking" {
-  project_id = var.project_id
+  project = var.project_id
   service    = "servicenetworking.googleapis.com"
 }
 
