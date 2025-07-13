@@ -1,4 +1,4 @@
-# Copyright 2023 Google LLC
+# Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
-
 from . import providers
 from .datastore import Client, create
 
-Config = Union[
-    providers.firestore.Config,
-    providers.postgres.Config,
-    providers.cloudsql_postgres.Config,
-]
+# The Config is now just the one from our single provider
+Config = providers.cloudsql_postgres.Config
 
-__ALL__ = [Client, Config, create, providers]
+# Expose the public names
+__all__ = ["Client", "Config", "create", "providers"]
