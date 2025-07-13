@@ -17,8 +17,13 @@ async def documents_search(request: Request, query: str, top_k: int = 3):
     results = await ds.search_documents(query_embedding, top_k)
     return {"results": results}
 
-@routes.get("/data/import")
-async def import_data(request: Request):
+from typing import List
+
+@routes.post("/documents/load")
+async def load_documents(request: Request, chunks: List[dict]):
+    """
+    Initializes the database with a list of chunks.
+    """
     ds: datastore.Client = request.app.state.datastore
-    await ds.initialize_data()
-    return {"status": "ok", "message": "Database initialized with paper chunks."}
+    await ds.initialize_data(paper_chunks=chunks)
+    return {"status": "ok", "message": f"Database initialized with {len(chunks)} paper chunks."}
