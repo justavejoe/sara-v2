@@ -7,7 +7,6 @@ steps:
   - --context=src/retrieval_service
   - --destination=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/retrieval-service:$SHORT_SHA
   - --cache=true
-  
 
 # Step 2: Apply Terraform, passing the newly built image as a variable
 - name: 'hashicorp/terraform:1.5.7'
