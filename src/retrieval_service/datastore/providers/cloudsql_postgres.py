@@ -1,3 +1,6 @@
+# Copyright 2024 Google LLC
+# (license header)
+
 import asyncio
 from typing import Literal
 import asyncpg
@@ -48,30 +51,30 @@ class Client(datastore.Client[Config]):
             raise TypeError("pool not instantiated")
         return cls(pool)
 
-async def initialize_data(self, paper_chunks: list[dict]) -> None:
-    async with self.__pool.connect() as conn:
-        await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE paper_chunks(
-                  id SERIAL PRIMARY KEY,
-                  paper_id TEXT,
-                  chunk_id INT,
-                  content TEXT NOT NULL,
-                  embedding vector(768) NOT NULL
+    async def initialize_data(self, paper_chunks: list[dict]) -> None:
+        async with self.__pool.connect() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE paper_chunks(
+                      id SERIAL PRIMARY KEY,
+                      paper_id TEXT,
+                      chunk_id INT,
+                      content TEXT NOT NULL,
+                      embedding vector(768) NOT NULL
+                    )
+                    """
                 )
-                """
             )
-        )
-        await conn.execute(
-            text(
-                """INSERT INTO paper_chunks (paper_id, chunk_id, content, embedding) VALUES (:paper_id, :chunk_id, :content, :embedding)"""
-            ),
-            paper_chunks,
-        )
-        await conn.commit()
-        
+            await conn.execute(
+                text(
+                    """INSERT INTO paper_chunks (paper_id, chunk_id, content, embedding) VALUES (:paper_id, :chunk_id, :content, :embedding)"""
+                ),
+                paper_chunks
+            )
+            await conn.commit()
+
     async def search_documents(
         self, query_embedding: list[float], top_k: int
     ) -> list[dict]:
