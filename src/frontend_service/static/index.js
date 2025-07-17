@@ -3,7 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const sendButton = document.getElementById("send-button");
     const responseArea = document.getElementById("response-area");
 
-    sendButton.addEventListener("click", async () => {
+    const search = async () => {
         const query = queryInput.value;
         if (!query) {
             alert("Please enter a question.");
@@ -13,23 +13,15 @@ document.addEventListener("DOMContentLoaded", () => {
         responseArea.innerHTML = "Searching...";
 
         try {
-            // NOTE: In a real deployment, this URL would be dynamically
-            // configured, but for now we will hardcode it.
-            // Please replace this with your backend URL.
-            const backendUrl = "PASTE_YOUR_RETRIEVAL_SERVICE_URL_HERE";
-
             const encodedQuery = encodeURIComponent(query);
-            const searchUrl = `${backendUrl}/documents/search?query=${encodedQuery}&top_k=3`;
+            // Point to our new proxy endpoint on the same domain
+            const searchUrl = `/api/search?query=${encodedQuery}&top_k=3`;
 
-            // We are calling a public frontend that calls a private backend.
-            // For this to work, the call must originate from the frontend service.
-            // We will need to adjust our architecture to handle auth properly later.
-            // For now, we will call the backend directly, which will fail due to CORS
-            // but demonstrates the client-side logic.
             const response = await fetch(searchUrl);
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const errorData = await response.json();
+                throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
@@ -37,7 +29,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         } catch (error) {
             console.error("Error fetching results:", error);
-            responseArea.innerHTML = `<p style="color: red;">Error: Could not fetch results. Check console for details. Your backend may not be publicly accessible.</p>`;
+            responseArea.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+        }
+    };
+
+    sendButton.addEventListener("click", search);
+    queryInput.addEventListener("keypress", (event) => {
+        if (event.key === "Enter") {
+            search();
         }
     });
 
@@ -49,10 +48,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         let html = "<ul>";
         results.forEach(item => {
-            html += `<li>
+            html += `<li style="border-bottom: 1px solid #ccc; margin-bottom: 1em; padding-bottom: 1em;">
                 <p><strong>Similarity:</strong> ${(item.similarity * 100).toFixed(2)}%</p>
                 <p><strong>Source:</strong> ${item.paper_id}</p>
-                <p>${item.content}</p>
+                <p>${item.content.replace(/\n/g, '<br>')}</p>
             </li>`;
         });
         html += "</ul>";
