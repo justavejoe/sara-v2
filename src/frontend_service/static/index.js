@@ -9,24 +9,18 @@ document.addEventListener("DOMContentLoaded", () => {
             alert("Please enter a question.");
             return;
         }
-
         responseArea.innerHTML = "Searching...";
-
         try {
             const encodedQuery = encodeURIComponent(query);
-            // Point to our new proxy endpoint on the same domain
             const searchUrl = `/api/search?query=${encodedQuery}&top_k=3`;
-
             const response = await fetch(searchUrl);
 
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
             }
-
             const data = await response.json();
             displayResults(data.results);
-
         } catch (error) {
             console.error("Error fetching results:", error);
             responseArea.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
@@ -45,7 +39,6 @@ document.addEventListener("DOMContentLoaded", () => {
             responseArea.innerHTML = "<p>No results found.</p>";
             return;
         }
-
         let html = "<ul>";
         results.forEach(item => {
             html += `<li style="border-bottom: 1px solid #ccc; margin-bottom: 1em; padding-bottom: 1em;">
