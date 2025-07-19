@@ -51,7 +51,11 @@ class Client(datastore.Client[Config]):
             raise TypeError("pool not instantiated")
         return cls(pool)
 
-    async def initialize_data(self, paper_chunks: list[dict]) -> None:
+    async def initialize_data(self) -> None:
+        import pandas as pd
+        processed_papers_df = pd.read_csv("./data/processed_papers.csv")
+        paper_chunks = processed_papers_df.to_dict('records')
+
         async with self.__pool.connect() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))
             await conn.execute(
