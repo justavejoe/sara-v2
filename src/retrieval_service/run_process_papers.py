@@ -1,8 +1,5 @@
-# Copyright 2024 Google LLC
-# (license header)
-
 import os
-from pypdf import PdfReader # Use the new library
+import fitz  # PyMuPDF library
 import pandas as pd
 from langchain_google_vertexai import VertexAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -14,7 +11,7 @@ EMBEDDING_MODEL_NAME = "text-embedding-004"
 
 def process_papers():
     """
-    Processes all PDF files in a directory, chunks their text,
+    Processes all PDF files, extracts metadata, chunks text,
     and generates embeddings.
     """
     print("Starting research paper processing...")
@@ -28,37 +25,63 @@ def process_papers():
 
     for filename in os.listdir(PDF_DIRECTORY):
         if filename.endswith(".pdf"):
-            paper_id = filename.replace(".pdf", "")
             print(f"Processing: {filename}")
 
-            # Use PdfReader to extract text
-            reader = PdfReader(os.path.join(PDF_DIRECTORY, filename))
-            full_text = ""
-            for page in reader.pages:
-                full_text += page.extract_text()
+            # --- New Metadata Extraction Logic ---
+            try:
+                doc = fitz.open(os.path.join(PDF_DIRECTORY, filename))
+                metadata = doc.metadata
+                title = metadata.get('title', filename.replace(".pdf", ""))
+                authors = metadata.get('author', 'Unknown Authors')
+                # Date may require more robust parsing in a real-world scenario
+                publication_date = metadata.get('creationDate', 'Unknown Date') 
+                
+                full_text = " ".join([page.get_text() for page in doc])
+                doc.close()
+            except Exception as e:
+                print(f"Could not process {filename}. Error: {e}")
+                continue # Skip to the next file
+            # --- End New Logic ---
 
             chunks = text_splitter.split_text(full_text)
 
-            for i, chunk_text in enumerate(chunks):
+            for chunk_text in chunks:
                 all_chunks.append({
-                    "paper_id": paper_id,
-                    "chunk_id": i,
+                    "source_filename": filename,
+                    "title": title,
+                    "authors": authors,
+                    "publication_date": publication_date,
                     "content": chunk_text
                 })
+
+    if not all_chunks:
+        print("No chunks were created. Exiting.")
+        return
 
     print(f"Created {len(all_chunks)} text chunks from all papers.")
 
     print("Generating embeddings...")
     contents = [x["content"] for x in all_chunks]
 
-    batch_size = 5
+    # Process in batches to respect API limits
+    batch_size = 5 
     for i in range(0, len(contents), batch_size):
         batch_contents = contents[i : i + batch_size]
-        embeddings = embed_service.embed_documents(batch_contents)
-        for j, embedding in enumerate(embeddings):
-            all_chunks[i+j]["embedding"] = embedding
+        try:
+            embeddings = embed_service.embed_documents(batch_contents)
+            for j, embedding in enumerate(embeddings):
+                all_chunks[i+j]["embedding"] = embedding
+        except Exception as e:
+            print(f"Error embedding batch starting at index {i}. Error: {e}")
+            # Handle error, e.g., by filling with None or skipping
+            for j in range(len(batch_contents)):
+                 all_chunks[i+j]["embedding"] = None
+
 
     df = pd.DataFrame(all_chunks)
+    # Remove rows where embedding failed
+    df.dropna(subset=['embedding'], inplace=True)
+    
     df.to_csv(OUTPUT_CSV_PATH, index=False)
     print(f"Successfully processed papers and saved to {OUTPUT_CSV_PATH}")
 

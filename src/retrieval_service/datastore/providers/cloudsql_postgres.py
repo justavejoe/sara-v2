@@ -1,8 +1,5 @@
-# Copyright 2024 Google LLC
-# (license header)
-
 import asyncio
-from typing import Literal
+from typing import Literal, List
 import asyncpg
 from google.cloud.sql.connector import Connector, IPTypes
 from pgvector.asyncpg import register_vector
@@ -51,29 +48,35 @@ class Client(datastore.Client[Config]):
             raise TypeError("pool not instantiated")
         return cls(pool)
 
-    async def initialize_data(self) -> None:
-        import pandas as pd
-        processed_papers_df = pd.read_csv("./data/processed_papers.csv")
-        paper_chunks = processed_papers_df.to_dict('records')
-
+    async def initialize_data(self, paper_chunks: list[dict]) -> None:
+        """
+        Initializes the database with a list of chunks from any source.
+        """
         async with self.__pool.connect() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS paper_chunks CASCADE"))
+            # Drop and recreate the table with the new, richer schema
+            await conn.execute(text("DROP TABLE IF EXISTS document_chunks CASCADE"))
             await conn.execute(
                 text(
                     """
-                    CREATE TABLE paper_chunks(
+                    CREATE TABLE document_chunks(
                       id SERIAL PRIMARY KEY,
-                      paper_id TEXT,
-                      chunk_id INT,
+                      source_filename TEXT,
+                      title TEXT,
+                      authors TEXT,
+                      publication_date TEXT,
                       content TEXT NOT NULL,
                       embedding vector(768) NOT NULL
                     )
                     """
                 )
             )
+            # Insert the data passed into the function
             await conn.execute(
                 text(
-                    """INSERT INTO paper_chunks (paper_id, chunk_id, content, embedding) VALUES (:paper_id, :chunk_id, :content, :embedding)"""
+                    """
+                    INSERT INTO document_chunks (source_filename, title, authors, publication_date, content, embedding) 
+                    VALUES (:source_filename, :title, :authors, :publication_date, :content, :embedding)
+                    """
                 ),
                 paper_chunks
             )
@@ -85,14 +88,20 @@ class Client(datastore.Client[Config]):
         async with self.__pool.connect() as conn:
             s = text(
                 """
-                SELECT paper_id, content, 1 - (embedding <=> :query_embedding) AS similarity
-                FROM paper_chunks
+                SELECT 
+                    source_filename, 
+                    title, 
+                    authors, 
+                    publication_date,
+                    content, 
+                    1 - (embedding <=> :query_embedding) AS similarity
+                FROM document_chunks
                 ORDER BY similarity DESC
                 LIMIT :top_k
                 """
             )
             params = {
-                "query_embedding": query_embedding,
+                "query_embedding": str(query_embedding), # Cast vector to string
                 "top_k": top_k,
             }
             results = (await conn.execute(s, params)).mappings().fetchall()

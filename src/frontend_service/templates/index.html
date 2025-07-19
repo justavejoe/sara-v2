@@ -3,16 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SARA 1.0</title>
+    <title>SARA | Skyway Advanced Research Assistant</title>
     <link rel="stylesheet" href="/static/index.css">
 </head>
 <body>
-    <h1>SARA 1.0</h1>
-    <div id="chat-container">
-        <input type="text" id="query-input" placeholder="Ask a question...">
-        <button id="send-button">Send</button>
-        <div id="response-area"></div>
-    </div>
+    <header class="sara-header">
+        <h1>SARA: Skyway Advanced Research Assistant</h1>
+    </header>
+
+    <main class="container">
+        <div class="search-container">
+            <input type="text" id="query-input" placeholder="Search research papers...">
+            <button id="send-button">Search</button>
+        </div>
+        <div id="response-area" class="results-grid">
+            </div>
+    </main>
+    
     <script src="/static/index.js"></script>
 </body>
 </html>
