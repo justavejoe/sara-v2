@@ -61,6 +61,11 @@ variable "retrieval_container" {
   default     = "us-docker.pkg.dev/google-samples/containers/jss/rag-retrieval-service:v0.0.3" # "us-central1-docker.pkg.dev/analytics-use-case-3-2/cloud-run-source-deploy/retrieval-service"
 }
 
+variable "frontend_container" {
+  type        = string
+  description = "The container image for the frontend service."
+}
+
 variable "database_type" {
   type        = string
   description = "Cloud SQL MySQL, Cloud SQL PostgreSQL, AlloyDB, or Cloud Spanner"
