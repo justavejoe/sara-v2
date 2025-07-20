@@ -82,30 +82,34 @@ class Client(datastore.Client[Config]):
             )
             await conn.commit()
 
-    async def search_documents(
-        self, query_embedding: list[float], top_k: int
-    ) -> list[dict]:
-        async with self.__pool.connect() as conn:
-            s = text(
-                """
-                SELECT 
-                    source_filename, 
-                    title, 
-                    authors, 
-                    publication_date,
-                    content, 
-                    1 - (embedding <=> :query_embedding) AS similarity
-                FROM document_chunks
-                ORDER BY similarity DESC
-                LIMIT :top_k
-                """
-            )
-            params = {
-                "query_embedding": str(query_embedding), # Cast vector to string
-                "top_k": top_k,
-            }
-            results = (await conn.execute(s, params)).mappings().fetchall()
-        return [dict(r) for r in results]
+# In datastore/providers/cloudsql_postgres.py
+
+async def search_documents(
+    self, query_embedding: list[float], top_k: int
+) -> list[dict]:
+    async with self.__pool.connect() as conn:
+        s = text(
+            """
+            SELECT 
+                source_filename, 
+                title, 
+                authors, 
+                publication_date,
+                content, 
+                1 - (embedding <=> :query_embedding) AS similarity
+            FROM document_chunks
+            ORDER BY similarity DESC
+            LIMIT :top_k
+            """
+        )
+        params = {
+            # --- CHANGE THIS LINE ---
+            "query_embedding": query_embedding, # Remove the str() cast
+            # ------------------------
+            "top_k": top_k,
+        }
+        results = (await conn.execute(s, params)).mappings().fetchall()
+    return [dict(r) for r in results]
 
     async def close(self):
         await self.__pool.dispose()
