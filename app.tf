@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -113,6 +113,10 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
     }
 
   }
+
+  depends_on = [
+    module.project-services
+  ]
 }
 
 # Deploys a service to be used for the frontend
@@ -146,6 +150,10 @@ resource "google_cloud_run_v2_service" "frontend_service" {
       }
     }
   }
+
+  depends_on = [
+    module.project-services
+  ]
 }
 
 # # Set the frontend service to allow all users
@@ -168,15 +176,15 @@ resource "google_cloud_run_service_iam_member" "noauth_frontend" {
 
 # tflint-ignore: terraform_unused_declarations
 # data "http" "database_init" {
-#  url    = "${google_cloud_run_v2_service.retrieval_service.uri}/data/import"
-#  method = "GET"
-#  request_headers = {
-#    Accept = "application/json"
-#  Authorization = "Bearer ${data.google_service_account_id_token.oidc.id_token}" }
+#   url    = "${google_cloud_run_v2_service.retrieval_service.uri}/data/import"
+#   method = "GET"
+#   request_headers = {
+#     Accept = "application/json"
+#   Authorization = "Bearer ${data.google_service_account_id_token.oidc.id_token}" }
 #
-#  depends_on = [
-#    google_sql_database.database,
-#    google_cloud_run_v2_service.retrieval_service,
-#    data.google_service_account_id_token.oidc,
-#  ]
+#   depends_on = [
+#     google_sql_database.database,
+#     google_cloud_run_v2_service.retrieval_service,
+#     data.google_service_account_id_token.oidc,
+#   ]
 # }
