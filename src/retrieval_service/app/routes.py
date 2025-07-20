@@ -57,7 +57,7 @@ async def documents_search(request: Request, query: str, top_k: int = 3):
     """
 
     # 3. GENERATE an answer
-    llm = VertexAI(model_name="gemini-2.5-flash") # Using a fast and capable model
+    llm = VertexAI(model_name="gemini-2.0-flash-001") # Using a fast and capable model
     answer = await llm.ainvoke(prompt)
 
     # Return the generated answer instead of the raw search results
