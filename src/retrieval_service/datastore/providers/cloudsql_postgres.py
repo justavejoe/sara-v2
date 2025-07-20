@@ -82,7 +82,7 @@ class Client(datastore.Client[Config]):
             )
             await conn.commit()
 
-# In datastore/providers/cloudsql_postgres.py
+# In datastore/providers/cloudsql_postgres.py hot
 
 async def search_documents(
     self, query_embedding: list[float], top_k: int
