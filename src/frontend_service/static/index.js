@@ -1,31 +1,57 @@
 document.addEventListener("DOMContentLoaded", () => {
     const queryInput = document.getElementById("query-input");
     const sendButton = document.getElementById("send-button");
-    const responseArea = document.getElementById("response-area");
+    const conversationLog = document.getElementById("conversation-log"); // Changed from response-area
 
     const search = async () => {
         const query = queryInput.value;
         if (!query) {
-            alert("Please enter a search query.");
+            alert("Please enter a question.");
             return;
         }
-        responseArea.innerHTML = '<p class="status-message">Searching...</p>';
+
+        // Display the user's question
+        appendMessage(query, 'user-message');
+        queryInput.value = ""; // Clear the input field
+
+        // Show a "thinking" message
+        appendMessage("Thinking...", 'bot-message', 'thinking-message');
+
         try {
             const encodedQuery = encodeURIComponent(query);
-            // The top_k parameter can be adjusted as needed
-            const searchUrl = `/api/search?query=${encodedQuery}&top_k=5`;
+            const searchUrl = `/api/search?query=${encodedQuery}&top_k=3`;
             const response = await fetch(searchUrl);
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
             }
             const data = await response.json();
-            displayResults(data.results);
+            
+            // Remove the "Thinking..." message before showing the final answer
+            const thinkingMessage = document.getElementById('thinking-message');
+            if(thinkingMessage) {
+                thinkingMessage.remove();
+            }
+            
+            // Display the bot's final answer
+            appendMessage(data.answer, 'bot-message');
+
         } catch (error) {
             console.error("Error fetching results:", error);
-            responseArea.innerHTML = `<p class="status-message error">Error: ${error.message}</p>`;
+            appendMessage(`Error: ${error.message}`, 'error-message');
         }
+    };
+
+    const appendMessage = (text, className, id = null) => {
+        const messageElement = document.createElement('div');
+        messageElement.className = `message ${className}`;
+        messageElement.textContent = text;
+        if (id) {
+            messageElement.id = id;
+        }
+        conversationLog.appendChild(messageElement);
+        conversationLog.scrollTop = conversationLog.scrollHeight; // Auto-scroll to bottom
     };
 
     sendButton.addEventListener("click", search);
@@ -34,43 +60,4 @@ document.addEventListener("DOMContentLoaded", () => {
             search();
         }
     });
-
-    function displayResults(results) {
-        if (!results || results.length === 0) {
-            responseArea.innerHTML = '<p class="status-message">No results found.</p>';
-            return;
-        }
-        // Clear the response area before adding new results
-        responseArea.innerHTML = ""; 
-        
-        results.forEach(item => {
-            // Create the card container
-            const card = document.createElement('div');
-            card.className = 'result-card';
-
-            // --- NOTE: Assuming the backend will provide this data soon ---
-            const title = item.title || 'Title Not Available';
-            const authors = item.authors ? item.authors.join(', ') : 'Authors not listed';
-            const publicationDate = item.publication_date || 'Date not available';
-            const sourceFile = item.source_filename || item.paper_id; // Fallback to paper_id
-            
-            // Populate the card with structured HTML
-            card.innerHTML = `
-                <h3 class="result-title">${title}</h3>
-                <div class="result-metadata">
-                    <p><strong>Authors:</strong> ${authors}</p>
-                    <p><strong>Published:</strong> ${publicationDate}</p>
-                    <p><strong>Source:</strong> ${sourceFile}</p>
-                </div>
-                <div class="result-content">
-                    <p>${item.content.replace(/\n/g, '<br>')}</p>
-                </div>
-                <div class="result-similarity">
-                    <span>Similarity: ${(item.similarity * 100).toFixed(1)}%</span>
-                </div>
-            `;
-            
-            responseArea.appendChild(card);
-        });
-    }
 });
