@@ -5,7 +5,7 @@ from langchain_google_vertexai import VertexAIEmbeddings
 from datastore.providers import cloudsql_postgres
 from .routes import routes
 
-EMBEDDING_MODEL_NAME = "gemini-embedding-001"
+EMBEDDING_MODEL_NAME = "gemini-embedding-004"
 
 @asynccontextmanager
 async def initialize_datastore(app: FastAPI):

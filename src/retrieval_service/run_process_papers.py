@@ -6,7 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 PDF_DIRECTORY = "./data/papers_to_process/"
 OUTPUT_CSV_PATH = "./data/processed_papers.csv"
-EMBEDDING_MODEL_NAME = "gemini-embedding-001"
+EMBEDDING_MODEL_NAME = "gemini-embedding-004"
 
 
 def process_papers():
