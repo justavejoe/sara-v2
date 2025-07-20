@@ -53,7 +53,6 @@ class Client(datastore.Client[Config]):
         Initializes the database with a list of chunks from any source.
         """
         async with self.__pool.connect() as conn:
-            # Drop and recreate the table with the new, richer schema
             await conn.execute(text("DROP TABLE IF EXISTS document_chunks CASCADE"))
             await conn.execute(
                 text(
@@ -70,7 +69,6 @@ class Client(datastore.Client[Config]):
                     """
                 )
             )
-            # Insert the data passed into the function
             await conn.execute(
                 text(
                     """
@@ -82,34 +80,30 @@ class Client(datastore.Client[Config]):
             )
             await conn.commit()
 
-# In datastore/providers/cloudsql_postgres.py hot
-
-async def search_documents(
-    self, query_embedding: list[float], top_k: int
-) -> list[dict]:
-    async with self.__pool.connect() as conn:
-        s = text(
-            """
-            SELECT 
-                source_filename, 
-                title, 
-                authors, 
-                publication_date,
-                content, 
-                1 - (embedding <=> :query_embedding) AS similarity
-            FROM document_chunks
-            ORDER BY similarity DESC
-            LIMIT :top_k
-            """
-        )
-        params = {
-            # --- CHANGE THIS LINE ---
-            "query_embedding": query_embedding, # Remove the str() cast
-            # ------------------------
-            "top_k": top_k,
-        }
-        results = (await conn.execute(s, params)).mappings().fetchall()
-    return [dict(r) for r in results]
+    async def search_documents(
+        self, query_embedding: list[float], top_k: int
+    ) -> list[dict]:
+        async with self.__pool.connect() as conn:
+            s = text(
+                """
+                SELECT 
+                    source_filename, 
+                    title, 
+                    authors, 
+                    publication_date,
+                    content, 
+                    1 - (embedding <=> :query_embedding) AS similarity
+                FROM document_chunks
+                ORDER BY similarity DESC
+                LIMIT :top_k
+                """
+            )
+            params = {
+                "query_embedding": query_embedding,
+                "top_k": top_k,
+            }
+            results = (await conn.execute(s, params)).mappings().fetchall()
+        return [dict(r) for r in results]
 
     async def close(self):
         await self.__pool.dispose()
