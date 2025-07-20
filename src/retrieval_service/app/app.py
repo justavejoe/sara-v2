@@ -5,7 +5,7 @@ from langchain_google_vertexai import VertexAIEmbeddings
 from datastore.providers import cloudsql_postgres
 from .routes import routes
 
-EMBEDDING_MODEL_NAME = "gemini-embedding-004"
+EMBEDDING_MODEL_NAME = "text-embedding-004"
 
 @asynccontextmanager
 async def initialize_datastore(app: FastAPI):
@@ -19,7 +19,11 @@ async def initialize_datastore(app: FastAPI):
         database=os.environ.get("DB_NAME"),
     )
     app.state.datastore = await cloudsql_postgres.Client.create(config)
-    app.state.embed_service = VertexAIEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    app.state.embed_service = VertexAIEmbeddings(
+        model_name=EMBEDDING_MODEL_NAME,
+        project=os.environ.get("DB_PROJECT"),
+        location=os.environ.get("DB_REGION"),
+    )
     yield
     await app.state.datastore.close()
 

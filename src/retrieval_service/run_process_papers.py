@@ -6,13 +6,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 PDF_DIRECTORY = "./data/papers_to_process/"
 OUTPUT_CSV_PATH = "./data/processed_papers.csv"
-EMBEDDING_MODEL_NAME = "gemini-embedding-004"
-
+EMBEDDING_MODEL_NAME = "text-embedding-004"
 
 def process_papers():
     """
-    Processes all PDF files, extracts metadata, chunks text,
-    and generates embeddings.
+    Processes all PDF files, extracts metadata, chunks text, and generates embeddings.
     """
     print("Starting research paper processing...")
     all_chunks = []
@@ -21,27 +19,28 @@ def process_papers():
         chunk_size=1000,
         chunk_overlap=100,
     )
-    embed_service = VertexAIEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    
+    # Initialize the embedding service, specifying the project
+    embed_service = VertexAIEmbeddings(
+        model_name=EMBEDDING_MODEL_NAME,
+        project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+    )
 
     for filename in os.listdir(PDF_DIRECTORY):
         if filename.endswith(".pdf"):
             print(f"Processing: {filename}")
-
-            # --- New Metadata Extraction Logic ---
             try:
                 doc = fitz.open(os.path.join(PDF_DIRECTORY, filename))
                 metadata = doc.metadata
                 title = metadata.get('title', filename.replace(".pdf", ""))
                 authors = metadata.get('author', 'Unknown Authors')
-                # Date may require more robust parsing in a real-world scenario
                 publication_date = metadata.get('creationDate', 'Unknown Date') 
                 
                 full_text = " ".join([page.get_text() for page in doc])
                 doc.close()
             except Exception as e:
                 print(f"Could not process {filename}. Error: {e}")
-                continue # Skip to the next file
-            # --- End New Logic ---
+                continue
 
             chunks = text_splitter.split_text(full_text)
 
@@ -59,11 +58,9 @@ def process_papers():
         return
 
     print(f"Created {len(all_chunks)} text chunks from all papers.")
-
     print("Generating embeddings...")
     contents = [x["content"] for x in all_chunks]
 
-    # Process in batches to respect API limits
     batch_size = 5 
     for i in range(0, len(contents), batch_size):
         batch_contents = contents[i : i + batch_size]
@@ -73,15 +70,11 @@ def process_papers():
                 all_chunks[i+j]["embedding"] = embedding
         except Exception as e:
             print(f"Error embedding batch starting at index {i}. Error: {e}")
-            # Handle error, e.g., by filling with None or skipping
             for j in range(len(batch_contents)):
                  all_chunks[i+j]["embedding"] = None
 
-
     df = pd.DataFrame(all_chunks)
-    # Remove rows where embedding failed
     df.dropna(subset=['embedding'], inplace=True)
-    
     df.to_csv(OUTPUT_CSV_PATH, index=False)
     print(f"Successfully processed papers and saved to {OUTPUT_CSV_PATH}")
 
