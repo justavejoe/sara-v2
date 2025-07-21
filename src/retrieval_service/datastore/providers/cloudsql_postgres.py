@@ -107,3 +107,18 @@ class Client(datastore.Client[Config]):
 
     async def close(self):
         await self.__pool.dispose()
+    async def add_documents(self, paper_chunks: list[dict]) -> None:
+        """
+        Adds a list of document chunks to the existing table.
+        """
+        async with self.__pool.connect() as conn:
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO document_chunks (source_filename, title, authors, publication_date, content, embedding) 
+                    VALUES (:source_filename, :title, :authors, :publication_date, :content, :embedding)
+                    """
+                ),
+                paper_chunks
+            )
+            await conn.commit()        

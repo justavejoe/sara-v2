@@ -7,7 +7,7 @@ import json
 BACKEND_URL = os.environ.get("BACKEND_URL")
 ID_TOKEN = os.environ.get("ID_TOKEN")
 
-CSV_PATH = "./data/processed_papers.csv"
+CSV_PATH = "./data/processed_patents.csv"
 
 def run_load():
     if not all([BACKEND_URL, ID_TOKEN]):

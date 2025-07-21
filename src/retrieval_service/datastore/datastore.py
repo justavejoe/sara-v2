@@ -29,5 +29,5 @@ class Client(ABC, Generic[C]):
         raise NotImplementedError("Subclass should implement this!")
 
     @abstractmethod
-    async def close(self):
+    async def add_documents(self, paper_chunks: list[dict]) -> None:
         pass
