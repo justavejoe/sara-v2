@@ -111,11 +111,10 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         subnetwork = google_compute_subnetwork.subnetwork.id
       }
     }
-
   }
 
   depends_on = [
-    module.project-services
+    google_project_iam_member.allrun
   ]
 }
 
@@ -152,7 +151,7 @@ resource "google_cloud_run_v2_service" "frontend_service" {
   }
 
   depends_on = [
-    module.project-services
+    google_project_iam_member.allrun
   ]
 }
 
@@ -164,8 +163,6 @@ resource "google_cloud_run_service_iam_member" "noauth_frontend" {
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
-
-
 
 #data "google_service_account_id_token" "oidc" {
 #  target_audience = google_cloud_run_v2_service.retrieval_service.uri
