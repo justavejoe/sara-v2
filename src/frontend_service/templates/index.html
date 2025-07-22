@@ -12,6 +12,16 @@
     </header>
 
     <main class="container">
+        <details class="upload-section">
+            <summary>Upload New Documents</summary>
+            <div class="upload-controls">
+                <input type="file" id="file-input" multiple hidden>
+                <label for="file-input" class="button">Choose Files</label>
+                <button id="upload-button" class="button">Upload</button>
+            </div>
+            <div id="file-list"></div>
+            <div id="upload-status"></div>
+        </details>
         <div id="conversation-log" class="conversation-container"></div>
         
         <div class="search-container">
