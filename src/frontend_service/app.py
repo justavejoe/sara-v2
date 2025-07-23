@@ -48,7 +48,6 @@ async def upload_proxy(files: List[UploadFile] = File(...)):
         headers = {"Authorization": f"Bearer {get_id_token()}"}
         upload_url = f"{BACKEND_URL}/documents/upload"
         
-        # FastAPI's UploadFile is file-like, so we can pass it directly to requests
         file_list = [("files", (file.filename, file.file, file.content_type)) for file in files]
         
         response = requests.post(upload_url, headers=headers, files=file_list)
