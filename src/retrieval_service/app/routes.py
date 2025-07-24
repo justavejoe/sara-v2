@@ -19,7 +19,7 @@ class DocumentChunk(BaseModel):
     embedding: List[float]
 
 routes = APIRouter()
-EMBEDDING_MODEL_NAME = "text-embedding-004"
+EMBEDDING_MODEL_NAME = "gemini-embedding-001"
 
 # --- New Helper Function ---
 def get_embed_service(request: Request) -> Embeddings:
@@ -122,7 +122,7 @@ async def documents_search(request: Request, query: str, top_k: int = 3):
         return {"answer": "I could not find any relevant information."}
     context = "\n---\n".join([result['content'] for result in search_results])
     prompt = f"Use only the context below to answer the user's question.\nCONTEXT:\n{context}\n\nQUESTION:\n{query}\n\nANSWER:"
-    llm = VertexAI(model_name="gemini-1.5-flash-001")
+    llm = VertexAI(model_name="gemini-2.5-flash")
     answer = await llm.ainvoke(prompt)
     return {"answer": answer}
 
