@@ -38,10 +38,6 @@ async def search_proxy(query: str, top_k: int = 3):
 
 @app.post("/api/upload")
 async def upload_proxy(files: List[UploadFile] = File(...)):
-    """
-    Receives files from the client and forwards them to the backend's 
-    /documents/upload endpoint.
-    """
     if not BACKEND_URL:
         return JSONResponse(status_code=500, content={"message": "Backend service URL not configured."})
     try:
