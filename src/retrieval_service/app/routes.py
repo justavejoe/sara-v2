@@ -19,7 +19,7 @@ class DocumentChunk(BaseModel):
     embedding: List[float]
 
 routes = APIRouter()
-EMBEDDING_MODEL_NAME = "gemini-embedding-001"
+EMBEDDING_MODEL_NAME = "gemini-2.5-flash-lite"
 
 # --- New Helper Function ---
 def get_embed_service(request: Request) -> Embeddings:
