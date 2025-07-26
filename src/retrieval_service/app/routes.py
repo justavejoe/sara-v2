@@ -1,4 +1,6 @@
 import os
+from google.cloud import storage
+from datetime import timedelta
 import fitz  # PyMuPDF
 import re
 from fastapi import APIRouter, Request, UploadFile, File
@@ -132,3 +134,34 @@ async def load_documents(request: Request, chunks: List[DocumentChunk]):
     dict_chunks = [chunk.model_dump() for chunk in chunks]
     await ds.initialize_data(paper_chunks=dict_chunks)
     return {"status": "ok", "message": f"Database initialized with {len(chunks)} document chunks."}
+
+@app.route("/documents/generate-upload-url", methods=["POST"])
+def generate_upload_url():
+    """Generates a signed URL for uploading a file to GCS."""
+    
+    # Get the bucket name from an environment variable for security
+    bucket_name = os.environ.get("GCS_BUCKET_NAME")
+    if not bucket_name:
+        return {"error": "GCS_BUCKET_NAME not configured"}, 500
+
+    # Get the filename from the client's request
+    request_json = request.get_json()
+    if not request_json or "filename" not in request_json:
+        return {"error": "Filename not provided"}, 400
+    
+    filename = request_json["filename"]
+    
+    # Create the signed URL
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(filename)
+
+    # The URL is valid for 15 minutes
+    signed_url = blob.generate_signed_url(
+        version="v4",
+        expiration=timedelta(minutes=15),
+        method="PUT",
+        content_type="application/pdf", # Assuming all uploads are PDFs
+    )
+
+    return {"signedUrl": signed_url}, 200
