@@ -3,55 +3,29 @@
 steps:
   # 1. Build the retrieval-service container image
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      [
-        'build',
-        '-t',
-        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
-        './src/retrieval_service',
-      ]
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest', './src/retrieval_service']
 
   # 2. Push the retrieval-service image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      [
-        'push',
-        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
-      ]
+    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
 
   # 3. Build the frontend-service container image
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      [
-        'build',
-        '-t',
-        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
-        './src/frontend_service',
-      ]
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest', './src/frontend_service']
 
   # 4. Push the frontend-service image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      [
-        'push',
-        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
-      ]
+    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest']
 
-  # 5. Initialize Terraform with the GCS Backend
+  # 5. Initialize Terraform. This will automatically detect and use your backend.tf file.
   - name: 'hashicorp/terraform:1.5.7'
     entrypoint: 'terraform'
-    args:
-      - 'init'
-      - '-backend-config=bucket=sara-1-2-sara-documents-vault' # Tells TF to use your GCS bucket for state
+    args: ['init']
 
-  # 6. Apply Terraform configuration
+  # 6. Apply Terraform configuration. It will use the variables defined in your .tf files.
   - name: 'hashicorp/terraform:1.5.7'
     entrypoint: 'terraform'
-    args:
-      - 'apply'
-      - '-auto-approve'
-      - '-var=project_id=${PROJECT_ID}'
-      - '-var=region=us-central1'
+    args: ['apply', '-auto-approve']
 
 # Store the images in Artifact Registry
 images:
