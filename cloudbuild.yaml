@@ -53,10 +53,12 @@ steps:
         terraform apply -auto-approve
         -var="project_id=${PROJECT_ID}"
         -var="region=us-central1"
-        -var="retrieval_container=us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest"
-        -var="frontend_container=us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest"
 
 # Store the images in Artifact Registry
 images:
   - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
   - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
+
+# CORRECTED LOGGING CONFIGURATION
+options:
+  logging: CLOUD_LOGGING_ONLY
