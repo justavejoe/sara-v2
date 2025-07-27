@@ -17,19 +17,19 @@
 # Creates the Service Account to be used by Cloud Run
 resource "google_service_account" "runsa" {
   project      = module.project-services.project_id
-  account_id   = "genai-rag-run-sa-${random_id.id.hex}"
-  display_name = "Service Account for Cloud Run"
-
+  account_id   = "sara-run-sa"
+  display_name = "SARA Cloud Run Service Account"
 }
 
-# # Applies permissions to the Cloud Run SA
+# Applies permissions to the Cloud Run SA
 resource "google_project_iam_member" "allrun" {
   for_each = toset([
-    "roles/cloudsql.instanceUser",
     "roles/cloudsql.client",
     "roles/run.invoker",
     "roles/aiplatform.user",
     "roles/iam.serviceAccountTokenCreator",
+    "roles/secretmanager.secretAccessor",
+    "roles/storage.objectAdmin",
   ])
 
   project = module.project-services.project_id
@@ -39,7 +39,7 @@ resource "google_project_iam_member" "allrun" {
 
 # Deploys a service to be used for the database
 resource "google_cloud_run_v2_service" "retrieval_service" {
-  name                = "retrieval-service-${random_id.id.hex}"
+  name                = "retrieval-service"
   location            = var.region
   project             = module.project-services.project_id
   deletion_protection = var.deletion_protection
@@ -48,46 +48,11 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
     service_account = google_service_account.runsa.email
     labels          = var.labels
 
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [google_sql_database_instance.main[0].connection_name]
-      }
-    }
-
     containers {
-      image = var.retrieval_container
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
-      }
+      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/retrieval-service:latest"
       env {
-        name  = "APP_HOST"
-        value = "0.0.0.0"
-      }
-      env {
-        name  = "APP_PORT"
-        value = "8080"
-      }
-      env {
-        name  = "DB_KIND"
-        value = "cloudsql-postgres"
-      }
-      env {
-        name  = "DB_PROJECT"
-        value = module.project-services.project_id
-      }
-      env {
-        name  = "DB_REGION"
-        value = var.region
-      }
-      env {
-        name  = "DB_INSTANCE"
-        value = google_sql_database_instance.main[0].name
-      }
-      env {
-        name  = "DB_NAME"
-        value = google_sql_database.database[0].name
+        name  = "GCS_BUCKET_NAME"
+        value = google_storage_bucket.sara_vault.name
       }
       env {
         name  = "DB_USER"
@@ -105,11 +70,12 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
     }
 
     vpc_access {
-      egress = "PRIVATE_RANGES_ONLY" # "ALL_TRAFFIC" # "PRIVATE_RANGES_ONLY"
       network_interfaces {
         network    = google_compute_network.main.id
         subnetwork = google_compute_subnetwork.subnetwork.id
+        tags       = ["direct-vpc-egress"]
       }
+      egress = "PRIVATE_RANGES_ONLY" # Re-added this line
     }
   }
 
@@ -120,7 +86,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
 
 # Deploys a service to be used for the frontend
 resource "google_cloud_run_v2_service" "frontend_service" {
-  name                = "frontend-service-${random_id.id.hex}"
+  name                = "frontend-service"
   location            = var.region
   project             = module.project-services.project_id
   deletion_protection = var.deletion_protection
@@ -130,22 +96,10 @@ resource "google_cloud_run_v2_service" "frontend_service" {
     labels          = var.labels
 
     containers {
-      image = var.frontend_container
+      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/frontend-service:latest"
       env {
         name  = "SERVICE_URL"
         value = google_cloud_run_v2_service.retrieval_service.uri
-      }
-      env {
-        name  = "SERVICE_ACCOUNT_EMAIL"
-        value = google_service_account.runsa.email
-      }
-      env {
-        name  = "ORCHESTRATION_TYPE"
-        value = "langchain-tools"
-      }
-      env {
-        name  = "DEBUG"
-        value = "False"
       }
     }
   }
@@ -155,7 +109,7 @@ resource "google_cloud_run_v2_service" "frontend_service" {
   ]
 }
 
-# # Set the frontend service to allow all users
+# Set the frontend service to allow all users
 resource "google_cloud_run_service_iam_member" "noauth_frontend" {
   location = google_cloud_run_v2_service.frontend_service.location
   project  = google_cloud_run_v2_service.frontend_service.project
@@ -163,25 +117,3 @@ resource "google_cloud_run_service_iam_member" "noauth_frontend" {
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
-
-#data "google_service_account_id_token" "oidc" {
-#  target_audience = google_cloud_run_v2_service.retrieval_service.uri
-#}
-
-# # Trigger the database init step from the retrieval service
-# # Manual Run: curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" {run_service}/data/import
-
-# tflint-ignore: terraform_unused_declarations
-# data "http" "database_init" {
-#   url    = "${google_cloud_run_v2_service.retrieval_service.uri}/data/import"
-#   method = "GET"
-#   request_headers = {
-#     Accept = "application/json"
-#   Authorization = "Bearer ${data.google_service_account_id_token.oidc.id_token}" }
-#
-#   depends_on = [
-#     google_sql_database.database,
-#     google_cloud_run_v2_service.retrieval_service,
-#     data.google_service_account_id_token.oidc,
-#   ]
-# }

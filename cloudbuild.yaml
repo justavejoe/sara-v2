@@ -1,33 +1,62 @@
+# Filename: cloudbuild.yaml
+
 steps:
-# Step 1: Build the backend Docker image
-- name: 'gcr.io/kaniko-project/executor:latest'
-  id: 'build-backend'
-  args:
-    - --dockerfile=src/retrieval_service/Dockerfile
-    - --context=src/retrieval_service
-    - --destination=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/retrieval-service:$SHORT_SHA
-    - --cache=true
+  # 1. Build the retrieval-service container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-t',
+        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
+        './src/retrieval_service',
+      ]
 
-# Step 2: Build the frontend Docker image
-- name: 'gcr.io/kaniko-project/executor:latest'
-  id: 'build-frontend'
-  args:
-    - --dockerfile=src/frontend_service/Dockerfile
-    - --context=src/frontend_service
-    - --destination=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/frontend-service:$SHORT_SHA
-    - --cache=true
+  # 2. Push the retrieval-service image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'push',
+        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
+      ]
 
-# Step 3: Apply Terraform, passing BOTH images as variables
-- name: 'hashicorp/terraform:1.5.7'
-  id: 'terraform-apply'
-  entrypoint: 'sh'
-  args:
-    - -c
-    - |
-      terraform init
-      terraform apply -auto-approve \
-        -var="retrieval_container=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/retrieval-service:$SHORT_SHA" \
-        -var="frontend_container=us-central1-docker.pkg.dev/$PROJECT_ID/sara-repo/frontend-service:$SHORT_SHA"
+  # 3. Build the frontend-service container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-t',
+        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
+        './src/frontend_service',
+      ]
 
-options:
-  logging: CLOUD_LOGGING_ONLY
+  # 4. Push the frontend-service image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'push',
+        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
+      ]
+
+  # 5. Initialize Terraform
+  - name: 'hashicorp/terraform:1.5.7'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - 'terraform init'
+
+  # 6. Apply Terraform configuration
+  - name: 'hashicorp/terraform:1.5.7'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - >
+        terraform apply -auto-approve
+        -var="project_id=${PROJECT_ID}"
+        -var="region=us-central1"
+        -var="retrieval_container=us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest"
+        -var="frontend_container=us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest"
+
+# Store the images in Artifact Registry
+images:
+  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
+  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
