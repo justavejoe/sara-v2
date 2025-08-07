@@ -52,7 +52,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
       image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/retrieval-service:latest"
       env {
         name  = "GCS_BUCKET_NAME"
-        value = google_storage_bucket.sara_vault.name
+        value = data.google_storage_bucket.sara_vault.name
       }
       env {
         name  = "DB_USER"
