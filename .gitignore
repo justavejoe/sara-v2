@@ -1,6 +1,5 @@
-**/terraform.tfstate*
+#**/terraform.tfstate*
 **/.terraform*
-**/backend.tf
 **/terraform.tfplan
 credentials.json
 
