@@ -1,40 +1,35 @@
 # Filename: cloudbuild.yaml
 
 steps:
-  # STEP 1: CLEAR THE BUILD CACHE
-  - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
-    args: ['-c', 'gcloud builds clear-cache']
-
-  # 2. Build the retrieval-service container image, ignoring the cache
+  # 1. Build the retrieval-service container image, ignoring the cache
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
         'build',
-        '--no-cache', # This flag forces a fresh build
+        '--no-cache', # This flag forces a completely fresh build
         '-t',
         'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
         './src/retrieval_service',
       ]
 
-  # 3. Push the retrieval-service image to Artifact Registry
+  # 2. Push the retrieval-service image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
 
-  # 4. Build the frontend-service container image
+  # 3. Build the frontend-service container image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '--no-cache', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest', './src/frontend_service']
 
-  # 5. Push the frontend-service image to Artifact Registry
+  # 4. Push the frontend-service image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest']
 
-  # 6. Initialize Terraform
+  # 5. Initialize Terraform
   - name: 'hashicorp/terraform:1.5.7'
     entrypoint: 'terraform'
     args: ['init']
 
-  # 7. Apply Terraform configuration
+  # 6. Apply Terraform configuration
   - name: 'hashicorp/terraform:1.5.7'
     entrypoint: 'terraform'
     args: ['apply', '-auto-approve']
