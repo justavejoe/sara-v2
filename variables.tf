@@ -22,7 +22,7 @@
 variable "project_id" {
   type        = string
   description = "The project ID to deploy to."
-  default     = "sara-1-2"
+  default     = "sara-project-v2"
 }
 
 variable "region" {

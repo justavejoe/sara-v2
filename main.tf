@@ -16,7 +16,7 @@
 
 # THIS IS THE MISSING BLOCK
 provider "google" {
-  project = "sara-1-2"
+  project = "sara-project-v2"
   region  = "us-central1"
 }
 
