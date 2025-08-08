@@ -1,33 +1,30 @@
-# Copyright 2023 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # Use the official lightweight Python image.
 # https://hub.docker.com/_/python
-FROM python:3.12-slim
+FROM python:3.12-slim AS base
 
-# Allow statements and log messages to immediately appear in the logs
-ENV PYTHONUNBUFFERED True
-
+# Set the working directory in the container
 WORKDIR /app
 
-# Install production dependencies.
-COPY ./requirements.txt requirements.txt
+# Prevent Python from writing pyc files to disc
+ENV PYTHONDONTWRITEBYTECODE 1
+# Ensure Python output is sent straight to the terminal without buffering
+ENV PYTHONUNBUFFERED 1
+
+# --- Builder Stage ---
+# This stage installs the dependencies
+FROM base AS builder
+COPY ./requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy local code to the container image.
-COPY . ./
+# --- Final Stage ---
+# This stage copies the installed dependencies and the application code
+FROM base AS final
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY . .
 
-# This command tells Gunicorn to look in the "app" folder for the "app.py" file
-# and find the Flask object named "app". This is the standard way to run Gunicorn.
+# Set the port the container will listen on
+ENV PORT 8080
+
+# Command to run the application
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "app.app:app"]
