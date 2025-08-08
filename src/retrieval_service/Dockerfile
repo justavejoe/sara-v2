@@ -28,5 +28,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy local code to the container image.
 COPY . ./
 
-# Run the web service on container startup.
-CMD ["python", "run_app.py"]
+
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 run_app:app
