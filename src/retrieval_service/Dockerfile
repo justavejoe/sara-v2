@@ -28,7 +28,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy local code to the container image.
 COPY . ./
 
-
-#CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 run_app:app
-#CMD ["ls", "-R", "/app"]
-CMD ["python", "run_app.py"]
+# This command tells Gunicorn to look in the "app" folder for the "app.py" file
+# and find the Flask object named "app". This is the standard way to run Gunicorn.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "app.app:app"]
