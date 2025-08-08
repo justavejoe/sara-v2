@@ -29,5 +29,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . ./
 
 
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 run_app:app
+#CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 run_app:app
 #CMD ["ls", "-R", "/app"]
+CMD ["python", "run_app.py"]
