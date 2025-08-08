@@ -5,7 +5,7 @@ from flask import Blueprint, request, jsonify
 from google.cloud import storage
 
 from models.models import Document
-from datastore.datastore import-get_datastore
+from datastore.datastore import get_datastore
 
 # 1. Create a Blueprint object
 routes = Blueprint('routes', __name__)
