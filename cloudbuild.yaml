@@ -1,9 +1,16 @@
 # Filename: cloudbuild.yaml
 
 steps:
-  # 1. Build the retrieval-service container image
+  # 1. Build the retrieval-service container image, ignoring the cache
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest', './src/retrieval_service']
+    args:
+      [
+        'build',
+        '--no-cache', # Add this flag to force a clean build
+        '-t',
+        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
+        './src/retrieval_service',
+      ]
 
   # 2. Push the retrieval-service image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
@@ -17,12 +24,12 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest']
 
-  # 5. Initialize Terraform. This will automatically detect and use your backend.tf file.
+  # 5. Initialize Terraform
   - name: 'hashicorp/terraform:1.5.7'
     entrypoint: 'terraform'
     args: ['init']
 
-  # 6. Apply Terraform configuration. It will use the variables defined in your .tf files.
+  # 6. Apply Terraform configuration
   - name: 'hashicorp/terraform:1.5.7'
     entrypoint: 'terraform'
     args: ['apply', '-auto-approve']
