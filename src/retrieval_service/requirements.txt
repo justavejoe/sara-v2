@@ -1,5 +1,8 @@
+# Filename: src/retrieval_service/requirements.txt
+flask
+gunicorn
+google-cloud-storage
+sqlalchemy
+psycopg2-binary
 PyMuPDF
 python-multipart
-sqlalchemy==2.0.36
-gunicorn
-flask
