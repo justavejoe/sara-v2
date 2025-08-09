@@ -1,7 +1,7 @@
 # Filename: cloudbuild.yaml
 
 steps:
-  # STEP 1: CREATE ARTIFACT REGISTRY REPO IF IT DOESN'T EXIST
+  # 1. Create Artifact Registry Repo if it doesn't exist
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
@@ -13,12 +13,12 @@ steps:
           --location=us-central1 \
           --description="SARA application container repository"
 
-  # 2. Build the retrieval-service container image, ignoring the cache
+  # 2. Build the retrieval-service (no-cache)
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
         'build',
-        '--no-cache',
+        '--no-cache', # This flag forces a fresh build
         '-t',
         'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
         './src/retrieval_service',
@@ -28,12 +28,12 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
 
-  # 4. Build the frontend-service container image, ignoring the cache
+  # 4. Build the frontend-service (no-cache)
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
         'build',
-        '--no-cache', # This is the critical addition for the frontend
+        '--no-cache', # Force a fresh build for the frontend as well
         '-t',
         'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
         './src/frontend_service',
