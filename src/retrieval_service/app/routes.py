@@ -1,16 +1,14 @@
-# Filename: src/retrieval_service/app/routes.py
 import os
 from datetime import timedelta
 from flask import Blueprint, request, jsonify
 from google.cloud import storage
 
-from models.models import Document
+from app.app import app
 from datastore.datastore import get_datastore
 
-# 1. Create a Blueprint object
+# Create a Blueprint object
 routes = Blueprint('routes', __name__)
 
-# 2. Change all "@app.route" to "@routes.route"
 @routes.route("/documents/search", methods=["GET"])
 def search():
     """Searches for the most relevant document chunks"""
@@ -21,19 +19,17 @@ def search():
         return {"error": "No query provided"}, 400
 
     datastore = get_datastore()
-
-    # Search for the most relevant document chunks
     results = datastore.search(query=query, top_k=int(top_k))
-
-    # Convert the results to a JSON-serializable format
     output = [doc.to_dict() for doc in results]
-
     return jsonify(output)
 
 
 @routes.route("/documents/upload", methods=["POST"])
 def upload():
     """Receives a document and stores it in the datastore."""
+    # Moved the import here to break the circular dependency
+    from models.models import Document
+    
     if "file" not in request.files:
         return {"error": "No file part"}, 400
 
@@ -49,11 +45,10 @@ def upload():
 
     return {"error": "File not allowed"}, 400
 
-# 3. This is our new endpoint, now attached to the "routes" Blueprint
+
 @routes.route("/documents/generate-upload-url", methods=["POST"])
 def generate_upload_url():
     """Generates a signed URL for uploading a file to GCS."""
-
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
     if not bucket_name:
         return {"error": "GCS_BUCKET_NAME not configured"}, 500
@@ -61,9 +56,9 @@ def generate_upload_url():
     request_json = request.get_json()
     if not request_json or "filename" not in request_json:
         return {"error": "Filename not provided"}, 400
-
+    
     filename = request_json["filename"]
-
+    
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(filename)
