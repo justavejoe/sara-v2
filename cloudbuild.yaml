@@ -13,12 +13,12 @@ steps:
           --location=us-central1 \
           --description="SARA application container repository"
 
-  # 2. Build the retrieval-service container image
+  # 2. Build the retrieval-service container image, ignoring the cache
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
         'build',
-        '--no-cache',
+        '--no-cache', # Force a fresh build
         '-t',
         'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
         './src/retrieval_service',
@@ -28,9 +28,16 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
 
-  # 4. Build the frontend-service container image
+  # 4. Build the frontend-service container image, ignoring the cache
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '--no-cache', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest', './src/frontend_service']
+    args:
+      [
+        'build',
+        '--no-cache', # Force a fresh build for the frontend
+        '-t',
+        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
+        './src/frontend_service',
+      ]
 
   # 5. Push the frontend-service image
   - name: 'gcr.io/cloud-builders/docker'
