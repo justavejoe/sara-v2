@@ -66,7 +66,7 @@ steps:
       - "Push retrieval-service"
       - "Push frontend-service"
 
-  # 8. Run Database Migrations
+  # 8. Run Database Migrations (updated for Cloud SQL Auth Proxy v2.x)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: "Run Database Migrations"
     entrypoint: 'bash'
@@ -76,14 +76,19 @@ steps:
         apt-get update && apt-get install -y python3 python3-pip
         pip3 install -r src/retrieval_service/requirements.txt
 
-        # Remove any old proxy
         rm -f cloud-sql-proxy
-        # Download the proxy using the substitution variable
         curl -o cloud-sql-proxy "${_CLOUD_SQL_PROXY_URL}"
-
         chmod +x cloud-sql-proxy
         chmod +x ./scripts/run_migrations.sh
+
+        # Start the proxy in the background using the correct v2.x syntax
+        ./cloud-sql-proxy "${_PROJECT_ID}:${_REGION}:${_DB_INSTANCE}" --address=0.0.0.0 --port=5432 &
+        PROXY_PID=$!
+        sleep 5  # Give the proxy time to start
+
         ./scripts/run_migrations.sh
+
+        kill $PROXY_PID
     env:
       - 'DB_USER=${_DB_USER}'
       - 'DB_PASSWORD=${_DB_PASS}'
