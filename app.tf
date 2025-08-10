@@ -109,6 +109,7 @@ resource "google_cloud_run_v2_service" "frontend_service" {
   ]
 }
 
+
 # Set the frontend service to allow all users
 resource "google_cloud_run_service_iam_member" "noauth_frontend" {
   location = google_cloud_run_v2_service.frontend_service.location
