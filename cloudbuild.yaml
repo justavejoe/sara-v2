@@ -126,12 +126,19 @@ steps:
     waitFor:
       - 'Run DB Migrations'
 
+# Define image outputs for other systems to reference
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-retrieval-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-frontend-service:latest'
+
 # Define substitution variables
 substitutions:
   _REGION: "us-central1"
   _DB_USER: "sara-user"
-  _DB_PASS: "secure-password-placeholder" # This should be set securely
+  _DB_PASS: "secure-password-placeholder" # This should be set securely in the trigger
   _DB_NAME: "sara-db"
-  _DB_CONNECTION_NAME: "" # e.g. my-project:us-central1:my-instance
+  _DB_CONNECTION_NAME: "" # This must be set in the trigger e.g. my-project:us-central1:my-instance
 
-# Define image outputs for other systems to
+# ADD THIS BLOCK to specify the logging option
+options:
+  logging: CLOUD_LOGGING_ONLY
