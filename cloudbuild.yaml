@@ -3,6 +3,7 @@
 steps:
   # 1. Create Artifact Registry Repo if it doesn't exist
   - name: 'gcr.io/cloud-builders/gcloud'
+    id: "Setup Artifact Registry"
     entrypoint: 'bash'
     args:
       - '-c'
@@ -15,43 +16,91 @@ steps:
 
   # 2. Build the retrieval-service (no-cache)
   - name: 'gcr.io/cloud-builders/docker'
+    id: "Build retrieval-service"
     args:
-      [
-        'build',
-        '--no-cache', # This flag forces a fresh build
-        '-t',
-        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest',
-        './src/retrieval_service',
-      ]
+      - 'build'
+      - '--no-cache'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
+      - './src/retrieval_service'
+    waitFor:
+      - "Setup Artifact Registry"
 
   # 3. Push the retrieval-service image
   - name: 'gcr.io/cloud-builders/docker'
+    id: "Push retrieval-service"
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
+    waitFor:
+      - "Build retrieval-service"
 
   # 4. Build the frontend-service (no-cache)
   - name: 'gcr.io/cloud-builders/docker'
+    id: "Build frontend-service"
     args:
-      [
-        'build',
-        '--no-cache', # Force a fresh build for the frontend as well
-        '-t',
-        'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest',
-        './src/frontend_service',
-      ]
+      - 'build'
+      - '--no-cache'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
+      - './src/frontend_service'
+    waitFor:
+      - "Setup Artifact Registry"
 
   # 5. Push the frontend-service image
   - name: 'gcr.io/cloud-builders/docker'
+    id: "Push frontend-service"
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest']
+    waitFor:
+      - "Build frontend-service"
 
   # 6. Initialize Terraform
   - name: 'hashicorp/terraform:1.5.7'
+    id: "Terraform init"
     entrypoint: 'terraform'
     args: ['init']
 
   # 7. Apply Terraform configuration
   - name: 'hashicorp/terraform:1.5.7'
+    id: "Terraform apply"
     entrypoint: 'terraform'
-    args: ['apply', '-auto-approve']
+    args: ['apply', '-auto-approve', '-var', 'project_id=${PROJECT_ID}']
+    waitFor:
+      - "Push retrieval-service"
+      - "Push frontend-service"
+
+  # --- FIX: ADDED THIS ENTIRE STEP ---
+  # 8. Run Database Migrations
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: "Run Database Migrations"
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Install Python, pip, and required packages for migration
+        apt-get update && apt-get install -y python3 python3-pip
+        pip3 install -r src/retrieval_service/requirements.txt
+
+        # Download and set up the Cloud SQL Auth Proxy
+        wget https://storage.googleapis.com/cloud-sql-proxy/v2.8.2/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+        chmod +x cloud-sql-proxy
+        
+        # Make our migration script executable
+        chmod +x ./scripts/run_migrations.sh
+
+        # Run the migration script
+        ./scripts/run_migrations.sh
+    env:
+      # These variables are passed to the run_migrations.sh script
+      # They must be configured in your Cloud Build Trigger as substitution variables
+      - 'DB_USER=${_DB_USER}'
+      - 'DB_PASSWORD=${_DB_PASS}'
+      - 'DB_NAME=${_DB_NAME}'
+      - 'DB_INSTANCE=${_DB_INSTANCE}'
+      - 'DB_PROJECT=${PROJECT_ID}'
+      - 'DB_REGION=${_REGION}'
+    waitFor:
+      - "Terraform apply" # This ensures it runs AFTER the database is created
+  # --- END FIX ---
+
 
 # Image configuration
 images:
