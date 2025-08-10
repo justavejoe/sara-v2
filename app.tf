@@ -45,6 +45,12 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
   deletion_protection = var.deletion_protection
 
   template {
+    # --- ADD THIS ANNOTATIONS BLOCK ---
+    annotations = {
+      "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main.connection_name
+    }
+    # --- END OF ADDED BLOCK ---
+
     service_account = google_service_account.runsa.email
     labels          = var.labels
 
