@@ -53,7 +53,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
     labels          = var.labels
 
     containers {
-      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/retrieval-service:latest"
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-retrieval-service:latest"
       
       env {
         name  = "GCS_BUCKET_NAME"
@@ -118,7 +118,7 @@ resource "google_cloud_run_v2_service" "frontend_service" {
     labels          = var.labels
 
     containers {
-      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/frontend-service:latest"
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-frontend-service:latest"
       env {
         name  = "SERVICE_URL"
         value = google_cloud_run_v2_service.retrieval_service.uri

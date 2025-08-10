@@ -20,7 +20,24 @@ if config.config_file_name is not None:
 
 # Set our model's metadata for 'autogenerate' support.
 target_metadata = Base.metadata
+# ADD THIS BLOCK to dynamically configure the database URL
+import os
+from sqlalchemy.engine.url import URL
 
+# Construct the database URL from environment variables
+# Cloud Build will set these variables for us.
+db_url = URL.create(
+    drivername="postgresql+psycopg2",
+    username=os.environ.get("DB_USER"),
+    password=os.environ.get("DB_PASS"),
+    database=os.environ.get("DB_NAME"),
+    host=os.environ.get("DB_HOST", "127.0.0.1"), # Defaults to localhost for proxy
+    port=os.environ.get("DB_PORT", 5432)
+)
+
+# Get the existing config section and update the URL
+config.set_main_option('sqlalchemy.url', db_url.render_as_string(hide_password=False))
+# END OF BLOCK
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

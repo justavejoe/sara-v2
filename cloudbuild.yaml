@@ -19,7 +19,7 @@ steps:
       - 'build'
       - '--no-cache'
       - '-t'
-      - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/retrieval-service:latest'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-retrieval-service:latest'
       - './src/retrieval_service'
     waitFor:
       - "Setup Artifact Registry"
@@ -27,7 +27,7 @@ steps:
   # 3. Push the retrieval-service image
   - name: 'gcr.io/cloud-builders/docker'
     id: "Push retrieval-service"
-    args: ['push', 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/retrieval-service:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-retrieval-service:latest']
     waitFor:
       - "Build retrieval-service"
 
@@ -38,7 +38,7 @@ steps:
       - 'build'
       - '--no-cache'
       - '-t'
-      - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/frontend-service:latest'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-frontend-service:latest'
       - './src/frontend_service'
     waitFor:
       - "Setup Artifact Registry"
@@ -46,7 +46,7 @@ steps:
   # 5. Push the frontend-service image
   - name: 'gcr.io/cloud-builders/docker'
     id: "Push frontend-service"
-    args: ['push', 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/frontend-service:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-frontend-service:latest']
     waitFor:
       - "Build frontend-service"
 
@@ -60,48 +60,78 @@ steps:
   - name: 'hashicorp/terraform:1.5.7'
     id: "Terraform apply"
     entrypoint: 'terraform'
-    args: ['apply', '-auto-approve', '-var', 'project_id=${_PROJECT_ID}']
+    args:
+      - 'apply'
+      - '-auto-approve'
+      - '-var=project_id=${PROJECT_ID}'
+      - '-var=region=${_REGION}'
+      - '-var=db_user=${_DB_USER}'
+      - '-var=db_pass=${_DB_PASS}'
+      - '-var=db_name=${_DB_NAME}'
     waitFor:
       - "Terraform init"
       - "Push retrieval-service"
       - "Push frontend-service"
 
-  # 8. Run Database Migrations (Cloud SQL Auth Proxy v2.x)
+  # 8. Start Cloud SQL Auth Proxy in the background
+  - name: 'gcr.io/cloudsql-docker/gce-proxy:latest'
+    id: 'Start DB Proxy'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - '/cloud_sql_proxy -instances=${_DB_CONNECTION_NAME}=tcp:5432 &'
+    waitFor:
+      - "Terraform apply"
+
+  # 9. Wait for the proxy to be ready
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: "Run Database Migrations"
+    id: 'Wait for DB Proxy'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        apt-get update && apt-get install -y python3 python3-pip
-        pip3 install -r src/retrieval_service/requirements.txt
+        until nc -z 127.0.0.1 5432; do
+          echo "Waiting for proxy...";
+          sleep 1;
+        done
+    waitFor:
+      - 'Start DB Proxy'
 
-        rm -f cloud-sql-proxy
-        curl -o cloud-sql-proxy "${_CLOUD_SQL_PROXY_URL}"
-        chmod +x cloud-sql-proxy
-        chmod +x ./scripts/run_migrations.sh
-
-        # Start the proxy in the background using the correct v2.x syntax
-        ./cloud-sql-proxy "${_PROJECT_ID}:${_REGION}:${_DB_INSTANCE}" --address=0.0.0.0 --port=5432 &
-        PROXY_PID=$!
-        sleep 5  # Give the proxy time to start
-
-        ./scripts/run_migrations.sh
-
-        kill $PROXY_PID
+  # 10. Run the simplified database migration script
+  - name: 'python:3.9-slim'
+    id: 'Run DB Migrations'
+    entrypoint: '/bin/bash'
+    args:
+      - '-c'
+      - |
+        pip install -r src/retrieval_service/requirements.txt
+        cd src/retrieval_service
+        alembic upgrade head
     env:
       - 'DB_USER=${_DB_USER}'
-      - 'DB_PASSWORD=${_DB_PASS}'
+      - 'DB_PASS=${_DB_PASS}'
       - 'DB_NAME=${_DB_NAME}'
-      - 'DB_INSTANCE=${_DB_INSTANCE}'
-      - 'DB_PROJECT=${_PROJECT_ID}'
-      - 'DB_REGION=${_REGION}'
+      - 'DB_HOST=127.0.0.1'
+      - 'DB_PORT=5432'
     waitFor:
-      - "Terraform apply"
+      - 'Wait for DB Proxy'
 
-images:
-  - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/retrieval-service:latest'
-  - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/frontend-service:latest'
+  # 11. Stop the proxy cleanly
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Stop DB Proxy'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'kill -s TERM $(pgrep cloud_sql_proxy)'
+    waitFor:
+      - 'Run DB Migrations'
 
-options:
-  logging: CLOUD_LOGGING_ONLY
+# Define substitution variables
+substitutions:
+  _REGION: "us-central1"
+  _DB_USER: "sara-user"
+  _DB_PASS: "secure-password-placeholder" # This should be set securely
+  _DB_NAME: "sara-db"
+  _DB_CONNECTION_NAME: "" # e.g. my-project:us-central1:my-instance
+
+# Define image outputs for other systems to
