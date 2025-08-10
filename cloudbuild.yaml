@@ -46,4 +46,63 @@ steps:
       - "Setup Artifact Registry"
 
   # 5. Push the frontend-service image
-  - name: '
+  - name: 'gcr.io/cloud-builders/docker'
+    id: "Push frontend-service"
+    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest']
+    waitFor:
+      - "Build frontend-service"
+
+  # 6. Initialize Terraform
+  - name: 'hashicorp/terraform:1.5.7'
+    id: "Terraform init"
+    entrypoint: 'terraform'
+    args: ['init', '-reconfigure']
+
+  # 7. Apply Terraform configuration
+  - name: 'hashicorp/terraform:1.5.7'
+    id: "Terraform apply"
+    entrypoint: 'terraform'
+    args: ['apply', '-auto-approve', '-var', 'project_id=${PROJECT_ID}']
+    waitFor:
+      - "Terraform init"
+      - "Push retrieval-service"
+      - "Push frontend-service"
+
+  # 8. Run Database Migrations
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: "Run Database Migrations"
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        apt-get update && apt-get install -y python3 python3-pip
+        pip3 install -r src/retrieval_service/requirements.txt
+        
+        # First, delete any old, cached version of the proxy file
+        rm -f cloud-sql-proxy
+        
+        # Now, download the fresh, correct version
+        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-proxy/v2.8.2/cloud-sql-proxy.linux.amd64
+        
+        chmod +x cloud-sql-proxy
+        chmod +x ./scripts/run_migrations.sh
+        ./scripts/run_migrations.sh
+    env:
+      # These variables must be configured in your Cloud Build Trigger
+      - 'DB_USER=${_DB_USER}'
+      - 'DB_PASSWORD=${_DB_PASS}'
+      - 'DB_NAME=${_DB_NAME}'
+      - 'DB_INSTANCE=${_DB_INSTANCE}'
+      - 'DB_PROJECT=${PROJECT_ID}'
+      - 'DB_REGION=${_REGION}'
+    waitFor:
+      - "Terraform apply"
+
+# Image configuration
+images:
+  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
+  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
+
+# Logging configuration
+options:
+  logging: CLOUD_LOGGING_ONLY
