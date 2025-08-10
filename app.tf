@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-# Creates the Service Account to be used by Cloud Run
+# Creates a single Service Account to be used by both Cloud Run services
 resource "google_service_account" "runsa" {
   project      = module.project-services.project_id
   account_id   = "sara-run-sa"
   display_name = "SARA Cloud Run Service Account"
 }
 
-# Applies permissions to the Cloud Run SA
+# Applies project-level permissions to the Cloud Run SA
 resource "google_project_iam_member" "allrun" {
   for_each = toset([
     "roles/cloudsql.client",
@@ -37,7 +37,7 @@ resource "google_project_iam_member" "allrun" {
   member  = "serviceAccount:${google_service_account.runsa.email}"
 }
 
-# Deploys a service to be used for the database
+# Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
   name                = "retrieval-service"
   location            = var.region
@@ -45,11 +45,10 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
   deletion_protection = var.deletion_protection
 
   template {
-    # --- ADD THIS ANNOTATIONS BLOCK ---
     annotations = {
-      "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main.connection_name
+      # This is the corrected line with the [0] index
+      "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main[0].connection_name
     }
-    # --- END OF ADDED BLOCK ---
 
     service_account = google_service_account.runsa.email
     labels          = var.labels
@@ -81,7 +80,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         subnetwork = google_compute_subnetwork.subnetwork.id
         tags       = ["direct-vpc-egress"]
       }
-      egress = "PRIVATE_RANGES_ONLY" # Re-added this line
+      egress = "PRIVATE_RANGES_ONLY"
     }
   }
 
@@ -90,7 +89,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
   ]
 }
 
-# Deploys a service to be used for the frontend
+# Deploys the frontend-service
 resource "google_cloud_run_v2_service" "frontend_service" {
   name                = "frontend-service"
   location            = var.region
@@ -115,12 +114,20 @@ resource "google_cloud_run_v2_service" "frontend_service" {
   ]
 }
 
+# Allows the frontend service to securely call the backend retrieval service.
+resource "google_cloud_run_v2_service_iam_member" "retrieval_service_invoker" {
+  project  = google_cloud_run_v2_service.retrieval_service.project
+  location = google_cloud_run_v2_service.retrieval_service.location
+  name     = google_cloud_run_v2_service.retrieval_service.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runsa.email}"
+}
 
-# Set the frontend service to allow all users
-resource "google_cloud_run_service_iam_member" "noauth_frontend" {
-  location = google_cloud_run_v2_service.frontend_service.location
+# Sets the frontend service to be publicly accessible
+resource "google_cloud_run_v2_service_iam_member" "noauth_frontend" {
   project  = google_cloud_run_v2_service.frontend_service.project
-  service  = google_cloud_run_v2_service.frontend_service.name
+  location = google_cloud_run_v2_service.frontend_service.location
+  name     = google_cloud_run_v2_service.frontend_service.name
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
