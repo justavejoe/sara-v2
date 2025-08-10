@@ -66,7 +66,7 @@ steps:
       - "Push retrieval-service"
       - "Push frontend-service"
 
-  # 8. Run Database Migrations (updated for Cloud SQL Auth Proxy v2.x)
+  # 8. Run Database Migrations (Cloud SQL Auth Proxy v2.x)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: "Run Database Migrations"
     entrypoint: 'bash'
