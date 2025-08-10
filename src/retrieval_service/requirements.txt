@@ -16,3 +16,6 @@ pydantic
 
 # Document Processing
 PyMuPDF
+
+# Development Tools
+ruff
