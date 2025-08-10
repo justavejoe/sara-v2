@@ -139,6 +139,6 @@ substitutions:
   _DB_NAME: "sara-db"
   _DB_CONNECTION_NAME: "" # This must be set in the trigger e.g. my-project:us-central1:my-instance
 
-# ADD THIS BLOCK to specify the logging option
+# Specify the logging option
 options:
   logging: CLOUD_LOGGING_ONLY
