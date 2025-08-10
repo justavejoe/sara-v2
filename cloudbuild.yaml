@@ -14,7 +14,7 @@ steps:
           --location=us-central1 \
           --description="SARA application container repository"
 
-  # 2. Build the retrieval-service (no-cache)
+  # 2. Build the retrieval-service
   - name: 'gcr.io/cloud-builders/docker'
     id: "Build retrieval-service"
     args:
@@ -33,7 +33,7 @@ steps:
     waitFor:
       - "Build retrieval-service"
 
-  # 4. Build the frontend-service (no-cache)
+  # 4. Build the frontend-service
   - name: 'gcr.io/cloud-builders/docker'
     id: "Build frontend-service"
     args:
@@ -56,7 +56,9 @@ steps:
   - name: 'hashicorp/terraform:1.5.7'
     id: "Terraform init"
     entrypoint: 'terraform'
-    args: ['init']
+    # --- THIS IS THE FIX ---
+    args: ['init', '-reconfigure']
+    # --- END FIX ---
 
   # 7. Apply Terraform configuration
   - name: 'hashicorp/terraform:1.5.7'
@@ -64,10 +66,10 @@ steps:
     entrypoint: 'terraform'
     args: ['apply', '-auto-approve', '-var', 'project_id=${PROJECT_ID}']
     waitFor:
+      - "Terraform init"
       - "Push retrieval-service"
       - "Push frontend-service"
 
-  # --- FIX: ADDED THIS ENTIRE STEP ---
   # 8. Run Database Migrations
   - name: 'gcr.io/cloud-builders/gcloud'
     id: "Run Database Migrations"
@@ -89,8 +91,7 @@ steps:
         # Run the migration script
         ./scripts/run_migrations.sh
     env:
-      # These variables are passed to the run_migrations.sh script
-      # They must be configured in your Cloud Build Trigger as substitution variables
+      # These variables must be configured in your Cloud Build Trigger
       - 'DB_USER=${_DB_USER}'
       - 'DB_PASSWORD=${_DB_PASS}'
       - 'DB_NAME=${_DB_NAME}'
@@ -98,15 +99,12 @@ steps:
       - 'DB_PROJECT=${PROJECT_ID}'
       - 'DB_REGION=${_REGION}'
     waitFor:
-      - "Terraform apply" # This ensures it runs AFTER the database is created
-  # --- END FIX ---
-
+      - "Terraform apply"
 
 # Image configuration
 images:
   - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
   - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
-
 
 # Logging configuration
 options:
