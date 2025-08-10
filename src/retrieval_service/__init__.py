@@ -1,30 +1,38 @@
 # src/retrieval_service/__init__.py
 
 import os
+import logging
 from flask import Flask
+
+# --- Configure Logging ---
+# This sets up logging to output detailed information to the console (Cloud Run logs)
+logging.basicConfig(level=logging.INFO)
 
 def create_app():
     """
     Application factory function. Creates and configures the Flask app.
-    This is the single entry point for creating the application.
     """
+    logging.info("Starting create_app function...")
     app = Flask(__name__)
+    logging.info("Flask app created.")
 
-    # Securely load configuration from environment variables
-    # This makes the app configurable without changing code.
+    # Load configuration from environment variables
     app.config["GCS_BUCKET_NAME"] = os.environ.get("GCS_BUCKET_NAME")
-    # Add other configurations here if needed
-    # app.config["DB_USER"] = os.environ.get("DB_USER")
+    logging.info("Configuration loaded.")
 
-    # The app context is the correct place to register all blueprints.
     with app.app_context():
-        # Import blueprints here, inside the function, to avoid circular dependencies.
+        logging.info("Entering app context to register blueprints.")
+        
+        # Import blueprints here to avoid circular dependencies
         from .main import main_bp
         from .views.upload import upload_bp
+        logging.info("Blueprints imported successfully.")
 
         # Register the blueprints with the app
         app.register_blueprint(main_bp)
-        # We can add a URL prefix to all routes in this blueprint for better organization
+        logging.info("main_bp registered.")
         app.register_blueprint(upload_bp, url_prefix='/api')
+        logging.info("upload_bp registered.")
 
+    logging.info("create_app function finished successfully.")
     return app
