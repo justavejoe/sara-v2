@@ -72,8 +72,9 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         value = google_sql_database_instance.main[0].name
       }
       env {
+        # This is the corrected line
         name  = "DB_NAME"
-        value = google_sql_database.main[0].name
+        value = google_sql_database.service[0].name
       }
       env {
         name  = "DB_USER"
