@@ -55,13 +55,95 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
     containers {
       image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/retrieval-service:latest"
       
-      # --- START: Environment Variables ---
       env {
         name  = "GCS_BUCKET_NAME"
         value = data.google_storage_bucket.sara_vault.name
       }
-
-      # --- FIX: Added these blocks for the new db.py ---
       env {
         name  = "DB_PROJECT"
-        value
+        value = var.project_id
+      }
+      env {
+        name  = "DB_REGION"
+        value = var.region
+      }
+      env {
+        name  = "DB_INSTANCE"
+        value = google_sql_database_instance.main[0].name
+      }
+      env {
+        name  = "DB_NAME"
+        value = google_sql_database.main[0].name
+      }
+      env {
+        name  = "DB_USER"
+        value = google_sql_user.service[0].name
+      }
+      env {
+        name = "DB_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.cloud_sql_password.secret_id
+            version = "latest"
+          }
+        }
+      }
+    }
+
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.main.id
+        subnetwork = google_compute_subnetwork.subnetwork.id
+        tags       = ["direct-vpc-egress"]
+      }
+      egress = "PRIVATE_RANGES_ONLY"
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.allrun
+  ]
+}
+
+# Deploys the frontend-service
+resource "google_cloud_run_v2_service" "frontend_service" {
+  name                = "frontend-service"
+  location            = var.region
+  project             = module.project-services.project_id
+  deletion_protection = var.deletion_protection
+
+  template {
+    service_account = google_service_account.runsa.email
+    labels          = var.labels
+
+    containers {
+      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/frontend-service:latest"
+      env {
+        name  = "SERVICE_URL"
+        value = google_cloud_run_v2_service.retrieval_service.uri
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.allrun
+  ]
+}
+
+# Allows the frontend service to securely call the backend retrieval service.
+resource "google_cloud_run_v2_service_iam_member" "retrieval_service_invoker" {
+  project  = google_cloud_run_v2_service.retrieval_service.project
+  location = google_cloud_run_v2_service.retrieval_service.location
+  name     = google_cloud_run_v2_service.retrieval_service.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+# Sets the frontend service to be publicly accessible
+resource "google_cloud_run_v2_service_iam_member" "noauth_frontend" {
+  project  = google_cloud_run_v2_service.frontend_service.project
+  location = google_cloud_run_v2_service.frontend_service.location
+  name     = google_cloud_run_v2_service.frontend_service.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
