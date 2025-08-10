@@ -1,0 +1,24 @@
+{
+  "name": "SARA Python Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+  "postCreateCommand": "pip install --no-cache-dir -r src/retrieval_service/requirements.txt",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+  "forwardPorts": [5000, 5001],
+  "workspaceFolder": "/workspaces/sara-v2",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/sara-v2,type=bind,consistency=cached"
+}

@@ -51,24 +51,11 @@ class Client(datastore.Client[Config]):
     async def initialize_data(self, paper_chunks: list[dict]) -> None:
         """
         Initializes the database with a list of chunks from any source.
+        NOTE: This method assumes the table has already been created by Alembic.
         """
         async with self.__pool.connect() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS document_chunks CASCADE"))
-            await conn.execute(
-                text(
-                    """
-                    CREATE TABLE document_chunks(
-                      id SERIAL PRIMARY KEY,
-                      source_filename TEXT,
-                      title TEXT,
-                      authors TEXT,
-                      publication_date TEXT,
-                      content TEXT NOT NULL,
-                      embedding vector(768) NOT NULL
-                    )
-                    """
-                )
-            )
+            # The DROP TABLE and CREATE TABLE commands have been removed.
+            # Alembic is now responsible for all schema management.
             await conn.execute(
                 text(
                     """
@@ -107,6 +94,7 @@ class Client(datastore.Client[Config]):
 
     async def close(self):
         await self.__pool.dispose()
+        
     async def add_documents(self, paper_chunks: list[dict]) -> None:
         """
         Adds a list of document chunks to the existing table.
@@ -121,4 +109,4 @@ class Client(datastore.Client[Config]):
                 ),
                 paper_chunks
             )
-            await conn.commit()        
+            await conn.commit()

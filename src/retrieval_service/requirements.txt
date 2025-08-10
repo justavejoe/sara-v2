@@ -1,8 +1,18 @@
-flask
-gunicorn
+# Flask and Web Server
+Flask>=2.0.0
+gunicorn>=20.0.0
+
+# Database
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.0
+alembic
+asyncpg
+pgvector
+
+# Google Cloud
 google-cloud-storage
-sqlalchemy
-psycopg2-binary
-PyMuPDF
-python-multipart
+cloud-sql-python-connector[psycopg2]
 pydantic
+
+# Document Processing
+PyMuPDF
