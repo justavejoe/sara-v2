@@ -32,4 +32,5 @@ ENV PORT 8080
 
 # The command to run the application
 #CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "app.app:app"]
+#CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 "retrieval_service:create_app()"
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 "retrieval_service:create_app()"

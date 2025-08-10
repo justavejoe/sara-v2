@@ -1,25 +1,26 @@
 # src/retrieval_service/__init__.py
+
 from flask import Flask
+import os
 
 def create_app():
     """
-    Application factory function.
+    Application factory function. Creates and configures the Flask app.
     """
     app = Flask(__name__)
 
-    # Import and register blueprints inside the factory
-    with app.app_context():
-        # Import your blueprints here
-        # Example:
-        # from . import main_routes
-        # app.register_blueprint(main_routes.main)
+    # Load environment variables into the app's config
+    app.config["GCS_BUCKET_NAME"] = os.environ.get("GCS_BUCKET_NAME")
 
-        # For your existing structure, if you have a 'main' blueprint in main.py:
-        from . import main
-        app.register_blueprint(main.main)
-        
-        # If you have other blueprints in a 'views' directory:
-        # from .views import upload
-        # app.register_blueprint(upload.upload_bp)
+
+    # Register all blueprints within the application context
+    with app.app_context():
+        # Import blueprints here to avoid circular dependencies
+        from .main import main_bp
+        from .views.upload import upload_bp
+
+        # Register the blueprints with the app
+        app.register_blueprint(main_bp)
+        app.register_blueprint(upload_bp, url_prefix='/api') # Optional: prefix all upload routes with /api
 
     return app
