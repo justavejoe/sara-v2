@@ -107,6 +107,7 @@ images:
   - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
   - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
 
+
 # Logging configuration
 options:
   logging: CLOUD_LOGGING_ONLY
