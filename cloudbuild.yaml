@@ -1,48 +1,7 @@
 # Filename: cloudbuild.yaml
 
 steps:
-  # 1. Create Artifact Registry Repo if it doesn't exist
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: "Setup Artifact Registry"
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        gcloud artifacts repositories describe sara-repo --location=us-central1 || \
-        gcloud artifacts repositories create sara-repo \
-          --repository-format=docker \
-          --location=us-central1 \
-          --description="SARA application container repository"
-
-  # 2. Build the retrieval-service
-  - name: 'gcr.io/cloud-builders/docker'
-    id: "Build retrieval-service"
-    args: ['build', '--no-cache', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest', './src/retrieval_service']
-    waitFor: ["Setup Artifact Registry"]
-
-  # 3. Push the retrieval-service image
-  - name: 'gcr.io/cloud-builders/docker'
-    id: "Push retrieval-service"
-    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
-    waitFor: ["Build retrieval-service"]
-
-  # 4. Build the frontend-service
-  - name: 'gcr.io/cloud-builders/docker'
-    id: "Build frontend-service"
-    args: ['build', '--no-cache', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest', './src/frontend_service']
-    waitFor: ["Setup Artifact Registry"]
-
-  # 5. Push the frontend-service image
-  - name: 'gcr.io/cloud-builders/docker'
-    id: "Push frontend-service"
-    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest']
-    waitFor: ["Build frontend-service"]
-
-  # 6. Initialize Terraform
-  - name: 'hashicorp/terraform:1.5.7'
-    id: "Terraform init"
-    entrypoint: 'terraform'
-    args: ['init', '-reconfigure']
+  # ... (steps 1 through 7 are the same) ...
 
   # 7. Apply Terraform configuration
   - name: 'hashicorp/terraform:1.5.7'
@@ -62,16 +21,15 @@ steps:
         pip3 install -r src/retrieval_service/requirements.txt
 
         # --- THIS IS THE FIX ---
-        # Use the direct, versioned URL for the Cloud SQL Auth Proxy
-        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-proxy/v2.8.2/cloud-sql-proxy.linux.amd64
+        # First, delete any old, cached version of the proxy file
+        rm -f cloud-sql-proxy
         # --- END FIX ---
 
-        chmod +x cloud-sql-proxy
+        # Now, download the fresh, correct version
+        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-proxy/v2.8.2/cloud-sql-proxy.linux.amd64
         
-        # Make our migration script executable
+        chmod +x cloud-sql-proxy
         chmod +x ./scripts/run_migrations.sh
-
-        # Run the migration script
         ./scripts/run_migrations.sh
     env:
       - 'DB_USER=${_DB_USER}'
@@ -82,11 +40,4 @@ steps:
       - 'DB_REGION=${_REGION}'
     waitFor: ["Terraform apply"]
 
-# Image configuration
-images:
-  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
-  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
-
-# Logging configuration
-options:
-  logging: CLOUD_LOGGING_ONLY
+# ... (rest of the file is the same) ...
