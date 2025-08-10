@@ -1,43 +1,49 @@
 # Filename: cloudbuild.yaml
 
 steps:
-  # ... (steps 1 through 7 are the same) ...
-
-  # 7. Apply Terraform configuration
-  - name: 'hashicorp/terraform:1.5.7'
-    id: "Terraform apply"
-    entrypoint: 'terraform'
-    args: ['apply', '-auto-approve', '-var', 'project_id=${PROJECT_ID}']
-    waitFor: ["Terraform init", "Push retrieval-service", "Push frontend-service"]
-
-  # 8. Run Database Migrations
+  # 1. Create Artifact Registry Repo if it doesn't exist
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: "Run Database Migrations"
+    id: "Setup Artifact Registry"
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        apt-get update && apt-get install -y python3 python3-pip
-        pip3 install -r src/retrieval_service/requirements.txt
+        gcloud artifacts repositories describe sara-repo --location=us-central1 || \
+        gcloud artifacts repositories create sara-repo \
+          --repository-format=docker \
+          --location=us-central1 \
+          --description="SARA application container repository"
 
-        # --- THIS IS THE FIX ---
-        # First, delete any old, cached version of the proxy file
-        rm -f cloud-sql-proxy
-        # --- END FIX ---
+  # 2. Build the retrieval-service
+  - name: 'gcr.io/cloud-builders/docker'
+    id: "Build retrieval-service"
+    args:
+      - 'build'
+      - '--no-cache'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest'
+      - './src/retrieval_service'
+    waitFor:
+      - "Setup Artifact Registry"
 
-        # Now, download the fresh, correct version
-        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-proxy/v2.8.2/cloud-sql-proxy.linux.amd64
-        
-        chmod +x cloud-sql-proxy
-        chmod +x ./scripts/run_migrations.sh
-        ./scripts/run_migrations.sh
-    env:
-      - 'DB_USER=${_DB_USER}'
-      - 'DB_PASSWORD=${_DB_PASS}'
-      - 'DB_NAME=${_DB_NAME}'
-      - 'DB_INSTANCE=${_DB_INSTANCE}'
-      - 'DB_PROJECT=${PROJECT_ID}'
-      - 'DB_REGION=${_REGION}'
-    waitFor: ["Terraform apply"]
+  # 3. Push the retrieval-service image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: "Push retrieval-service"
+    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/retrieval-service:latest']
+    waitFor:
+      - "Build retrieval-service"
 
-# ... (rest of the file is the same) ...
+  # 4. Build the frontend-service
+  - name: 'gcr.io/cloud-builders/docker'
+    id: "Build frontend-service"
+    args:
+      - 'build'
+      - '--no-cache'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/${PROJECT_ID}/sara-repo/frontend-service:latest'
+      - './src/frontend_service'
+    waitFor:
+      - "Setup Artifact Registry"
+
+  # 5. Push the frontend-service image
+  - name: '
