@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,23 +17,23 @@
 # Configure PSC
 # # Create VPC
 resource "google_compute_network" "main" {
-  name                    = "genai-rag-psc-${random_id.id.hex}"
+  name                    = "sara-vpc-main" # Static name for stability
   auto_create_subnetworks = false
-  project                 = module.project-services.project_id
+  project                 = var.project_id
 }
 
 # # Create Subnet
 resource "google_compute_subnetwork" "subnetwork" {
-  name          = "genai-rag-psc-subnet-${random_id.id.hex}"
+  name          = "sara-subnet-main" # Static name for stability
   ip_cidr_range = "10.2.0.0/16"
   region        = var.region
   network       = google_compute_network.main.id
-  project       = module.project-services.project_id
+  project       = var.project_id
 }
 
 # # Configure IP
 resource "google_compute_address" "default" {
-  project      = module.project-services.project_id
+  project      = var.project_id
   name         = "psc-compute-address"
   region       = var.region
   address_type = "INTERNAL"
@@ -43,7 +43,10 @@ resource "google_compute_address" "default" {
 
 # # Create VPC / PSC forwarding rule
 resource "google_compute_forwarding_rule" "default" {
-  project               = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project               = var.project_id
   name                  = "psc-forwarding-rule-${google_sql_database_instance.main[0].name}"
   region                = var.region
   network               = google_compute_network.main.id
@@ -54,7 +57,10 @@ resource "google_compute_forwarding_rule" "default" {
 
 # # Create DNS Zone for PSC
 resource "google_dns_managed_zone" "psc" {
-  project     = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project     = var.project_id
   name        = "${google_sql_database_instance.main[0].name}-${random_id.id.hex}-zone"
   dns_name    = "${google_sql_database_instance.main[0].region}.sql.goog."
   description = "Regional zone for Cloud SQL PSC instances"
@@ -68,16 +74,20 @@ resource "google_dns_managed_zone" "psc" {
 
 # # Add SQL DNS record
 resource "google_dns_record_set" "psc" {
-  project      = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project      = var.project_id
   name         = google_sql_database_instance.main[0].dns_name
   type         = "A"
   ttl          = 300
-  managed_zone = google_dns_managed_zone.psc.name
+  managed_zone = google_dns_managed_zone.psc[0].name
   rrdatas      = [google_compute_address.default.address]
 }
+
 resource "google_project_service" "service_networking" {
   project = var.project_id
-  service    = "servicenetworking.googleapis.com"
+  service = "servicenetworking.googleapis.com"
 }
 
 resource "google_compute_global_address" "private_ip_address" {
