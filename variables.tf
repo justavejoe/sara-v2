@@ -70,3 +70,19 @@ variable "database_type" {
     error_message = "Must be \"alloydb\", \"mysql\", \"postgresql\" or \"spanner\"."
   }
 }
+
+variable "db_user" {
+  description = "The username for the Cloud SQL database user."
+  type        = string
+}
+
+variable "db_pass" {
+  description = "The password for the Cloud SQL database user."
+  type        = string
+  sensitive   = true
+}
+
+variable "db_name" {
+  description = "The name of the Cloud SQL database."
+  type        = string
+}
