@@ -73,40 +73,43 @@ steps:
       - "Push retrieval-service"
       - "Push frontend-service"
 
-  # 8. Start Cloud SQL Auth Proxy in the background
-  - name: 'gcr.io/cloudsql-docker/gce-proxy:latest'
-    id: 'Start DB Proxy'
-    entrypoint: 'sh'
-    args:
-      - '-c'
-      - '/cloud_sql_proxy -instances=${_DB_CONNECTION_NAME}=tcp:5432 &'
-    waitFor:
-      - "Terraform apply"
-
-  # 9. Wait for the proxy to be ready
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Wait for DB Proxy'
+  # 8. Run Database Migrations with Cloud SQL Proxy
+  - name: 'python:3.9'
+    id: 'Run DB Migrations'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        until nc -z 127.0.0.1 5432; do
-          echo "Waiting for proxy...";
-          sleep 1;
-        done
-    waitFor:
-      - 'Start DB Proxy'
-
-  # 10. Run the simplified database migration script
-  - name: 'python:3.9-slim'
-    id: 'Run DB Migrations'
-    entrypoint: '/bin/bash'
-    args:
-      - '-c'
-      - |
+        # Install dependencies: curl, netcat, and project requirements
+        apt-get update && apt-get install -y curl netcat-traditional
         pip install -r src/retrieval_service/requirements.txt
+
+        # Download and start the Cloud SQL Auth Proxy
+        echo "Downloading Cloud SQL Auth Proxy..."
+        curl -o cloud_sql_proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v1.33.9/cloud-sql-proxy.linux.amd64
+        chmod +x cloud_sql_proxy
+        ./cloud_sql_proxy -instances=${_DB_CONNECTION_NAME}=tcp:5432 &
+        PROXY_PID=$!
+        
+        # Wait for the proxy to be ready
+        echo "Waiting for proxy to start..."
+        while ! nc -z 127.0.0.1 5432; do
+          sleep 1
+          # Check if the proxy has failed to start
+          if ! kill -0 $PROXY_PID 2>/dev/null; then
+            echo "Proxy has failed to start."
+            exit 1
+          fi
+        done
+        echo "Proxy started successfully."
+
+        # Run the database migrations from the correct directory
         cd src/retrieval_service
         alembic upgrade head
+        echo "Migrations complete."
+        
+        # Stop the proxy
+        kill $PROXY_PID
     env:
       - 'DB_USER=${_DB_USER}'
       - 'DB_PASS=${_DB_PASS}'
@@ -114,17 +117,7 @@ steps:
       - 'DB_HOST=127.0.0.1'
       - 'DB_PORT=5432'
     waitFor:
-      - 'Wait for DB Proxy'
-
-  # 11. Stop the proxy cleanly
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Stop DB Proxy'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - 'kill -s TERM $(pgrep cloud_sql_proxy)'
-    waitFor:
-      - 'Run DB Migrations'
+      - "Terraform apply"
 
 # Define image outputs for other systems to reference
 images:
