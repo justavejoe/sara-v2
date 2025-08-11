@@ -100,10 +100,10 @@ steps:
         done
         echo "Proxy started successfully."
         
-        # NEW STEP: Grant permissions to the user before running migrations
-        echo "Granting schema permissions..."
+        # FINAL FIX: Connect to the 'postgres' DB and assign ownership of our new DB to our user.
+        echo "Assigning database ownership..."
         export PGPASSWORD=$$DB_PASS
-        psql "host=127.0.0.1 port=5432 sslmode=disable dbname=$$DB_NAME user=$$DB_USER" -c "GRANT CREATE ON SCHEMA public TO \"$$DB_USER\";"
+        psql "host=127.0.0.1 port=5432 sslmode=disable dbname=postgres user=$$DB_USER" -c "ALTER DATABASE \"$$DB_NAME\" OWNER TO \"$$DB_USER\";"
         
         # Run the database migrations
         echo "Running Alembic migrations..."
