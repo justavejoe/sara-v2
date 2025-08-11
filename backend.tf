@@ -2,7 +2,9 @@
 
 terraform {
   backend "gcs" {
-    bucket  = "sara-project-v2-sara-documents-vault" # Use the exact name of your GCS bucket
+    # CORRECTED: This now points to the dedicated Terraform state bucket
+    # that was being used in your Cloud Build environment.
+    bucket  = "sara-v2-tf-state-1b431b9d" 
     prefix  = "terraform/state"
   }
 }

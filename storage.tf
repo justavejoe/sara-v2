@@ -1,7 +1,10 @@
 # Filename: storage.tf
 
-# This tells Terraform to get data about an EXISTING bucket
-# instead of trying to create a new one.
-data "google_storage_bucket" "sara_vault" {
-  name = "${var.project_id}-sara-documents-vault"
+# This now correctly defines the application's data vault as a
+# resource that Terraform will create and manage.
+resource "google_storage_bucket" "sara_vault" {
+  name          = "${var.project_id}-sara-documents-vault"
+  location      = var.region
+  force_destroy = true # Set to true for easier cleanup in non-production environments
+  uniform_bucket_level_access = true
 }

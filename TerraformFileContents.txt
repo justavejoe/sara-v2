@@ -1,4 +1,4 @@
-Log generated on Mon 08/11/2025 at 11:07:07.08 
+Log generated on Mon 08/11/2025 at 12:45:27.69 
  
 ================================================================= 
 Processing path: "C:\Users\just_\sara-v2\.devcontainer" 
@@ -40,58 +40,54 @@ resource "google_service_account" "runsa" {
   display_name = "SARA Cloud Run Service Account"
 }
 
-# Applies project-level permissions to the Cloud Run SA
-resource "google_project_iam_member" "allrun" {
-  for_each = toset([
-    "roles/cloudsql.client",
-    "roles/run.invoker",
-    "roles/aiplatform.user",
-    "roles/iam.serviceAccountTokenCreator",
-    "roles/secretmanager.secretAccessor",
-    "roles/storage.objectAdmin",
-  ])
+# Grant the service account access to the SQL password secret
+resource "google_secret_manager_secret_iam_member" "password_accessor" {
+  project   = google_secret_manager_secret.cloud_sql_password.project
+  secret_id = google_secret_manager_secret.cloud_sql_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runsa.email}"
+}
 
+# Grant the service account access to the Cloud SQL instance
+resource "google_project_iam_member" "sql_client" {
   project = module.project-services.project_id
-  role    = each.key
+  role    = "roles/cloudsql.client"
   member  = "serviceAccount:${google_service_account.runsa.email}"
 }
 
+# Grant the service account access to Vertex AI
+resource "google_project_iam_member" "ai_user" {
+  project = module.project-services.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+# Grant the service account read/write access to the application's data vault.
+resource "google_storage_bucket_iam_member" "data_vault_access" {
+  bucket = data.google_storage_bucket.sara_vault.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+
 # Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
-  name                = "retrieval-service"
-  location            = var.region
-  project             = module.project-services.project_id
-  deletion_protection = var.deletion_protection
+  name     = "retrieval-service"
+  location = var.region
+  project  = module.project-services.project_id
 
   template {
     annotations = {
       "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main[0].connection_name
     }
-
     service_account = google_service_account.runsa.email
-    labels          = var.labels
-
     containers {
       image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-retrieval-service:latest"
-      
       env {
         name  = "GCS_BUCKET_NAME"
         value = data.google_storage_bucket.sara_vault.name
       }
       env {
-        name  = "DB_PROJECT"
-        value = var.project_id
-      }
-      env {
-        name  = "DB_REGION"
-        value = var.region
-      }
-      env {
-        name  = "DB_INSTANCE"
-        value = google_sql_database_instance.main[0].name
-      }
-      env {
-        # This is the final corrected line
         name  = "DB_NAME"
         value = google_sql_database.database[0].name
       }
@@ -100,7 +96,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         value = google_sql_user.service[0].name
       }
       env {
-        name = "DB_PASSWORD"
+        name = "DB_PASSWORD_SECRET"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.cloud_sql_password.secret_id
@@ -109,33 +105,24 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         }
       }
     }
-
     vpc_access {
       network_interfaces {
         network    = google_compute_network.main.id
         subnetwork = google_compute_subnetwork.subnetwork.id
-        tags       = ["direct-vpc-egress"]
       }
-      egress = "PRIVATE_RANGES_ONLY"
+      egress = "ALL_TRAFFIC"
     }
   }
-
-  depends_on = [
-    google_project_iam_member.allrun
-  ]
 }
 
 # Deploys the frontend-service
 resource "google_cloud_run_v2_service" "frontend_service" {
-  name                = "frontend-service"
-  location            = var.region
-  project             = module.project-services.project_id
-  deletion_protection = var.deletion_protection
+  name     = "frontend-service"
+  location = var.region
+  project  = module.project-services.project_id
 
   template {
     service_account = google_service_account.runsa.email
-    labels          = var.labels
-
     containers {
       image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-frontend-service:latest"
       env {
@@ -144,10 +131,6 @@ resource "google_cloud_run_v2_service" "frontend_service" {
       }
     }
   }
-
-  depends_on = [
-    google_project_iam_member.allrun
-  ]
 }
 
 # Allows the frontend service to securely call the backend retrieval service.
@@ -161,6 +144,7 @@ resource "google_cloud_run_v2_service_iam_member" "retrieval_service_invoker" {
 
 # Sets the frontend service to be publicly accessible
 resource "google_cloud_run_v2_service_iam_member" "noauth_frontend" {
+  # FINAL FIX: Corrected the typo from two underscores to one.
   project  = google_cloud_run_v2_service.frontend_service.project
   location = google_cloud_run_v2_service.frontend_service.location
   name     = google_cloud_run_v2_service.frontend_service.name
@@ -235,8 +219,6 @@ resource "google_sql_database_instance" "main" {
     user_labels       = var.labels
     ip_configuration {
       ipv4_enabled    = false
-      # CORRECTED: This now correctly points to the 'main' VPC network resource
-      # declared in network.tf.
       private_network = google_compute_network.main.id
     }
     database_flags {
@@ -246,9 +228,7 @@ resource "google_sql_database_instance" "main" {
   }
 
   deletion_protection = var.deletion_protection
-  # This dependency is critical to prevent race conditions. It ensures the network
-  # is fully ready before trying to create the database instance.
-  depends_on = [google_service_networking_connection.private_service_access]
+  depends_on          = [google_service_networking_connection.private_service_access]
 }
 
 # Create Database
@@ -268,7 +248,7 @@ resource "google_sql_user" "service" {
   name            = var.db_user
   project         = var.project_id
   instance        = google_sql_database_instance.main[0].name
-  password        = random_password.password.result
+  password        = random_password.cloud_sql_password.result
   deletion_policy = "ABANDON"
 }
 
@@ -358,7 +338,7 @@ Processing path: "C:\Users\just_\sara-v2\network.tf"
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -370,23 +350,23 @@ Processing path: "C:\Users\just_\sara-v2\network.tf"
 # Configure PSC
 # # Create VPC
 resource "google_compute_network" "main" {
-  name                    = "genai-rag-psc-${random_id.id.hex}"
+  name                    = "sara-vpc-main" # Static name for stability
   auto_create_subnetworks = false
-  project                 = module.project-services.project_id
+  project                 = var.project_id
 }
 
 # # Create Subnet
 resource "google_compute_subnetwork" "subnetwork" {
-  name          = "genai-rag-psc-subnet-${random_id.id.hex}"
+  name          = "sara-subnet-main" # Static name for stability
   ip_cidr_range = "10.2.0.0/16"
   region        = var.region
   network       = google_compute_network.main.id
-  project       = module.project-services.project_id
+  project       = var.project_id
 }
 
 # # Configure IP
 resource "google_compute_address" "default" {
-  project      = module.project-services.project_id
+  project      = var.project_id
   name         = "psc-compute-address"
   region       = var.region
   address_type = "INTERNAL"
@@ -396,7 +376,10 @@ resource "google_compute_address" "default" {
 
 # # Create VPC / PSC forwarding rule
 resource "google_compute_forwarding_rule" "default" {
-  project               = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project               = var.project_id
   name                  = "psc-forwarding-rule-${google_sql_database_instance.main[0].name}"
   region                = var.region
   network               = google_compute_network.main.id
@@ -407,7 +390,10 @@ resource "google_compute_forwarding_rule" "default" {
 
 # # Create DNS Zone for PSC
 resource "google_dns_managed_zone" "psc" {
-  project     = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project     = var.project_id
   name        = "${google_sql_database_instance.main[0].name}-${random_id.id.hex}-zone"
   dns_name    = "${google_sql_database_instance.main[0].region}.sql.goog."
   description = "Regional zone for Cloud SQL PSC instances"
@@ -421,16 +407,20 @@ resource "google_dns_managed_zone" "psc" {
 
 # # Add SQL DNS record
 resource "google_dns_record_set" "psc" {
-  project      = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project      = var.project_id
   name         = google_sql_database_instance.main[0].dns_name
   type         = "A"
   ttl          = 300
-  managed_zone = google_dns_managed_zone.psc.name
+  managed_zone = google_dns_managed_zone.psc[0].name
   rrdatas      = [google_compute_address.default.address]
 }
+
 resource "google_project_service" "service_networking" {
   project = var.project_id
-  service    = "servicenetworking.googleapis.com"
+  service = "servicenetworking.googleapis.com"
 }
 
 resource "google_compute_global_address" "private_ip_address" {
@@ -519,69 +509,36 @@ Processing path: "C:\Users\just_\sara-v2\secrets.tf"
  * limitations under the License.
  */
 
-# Handle Database Instance
-resource "google_sql_database_instance" "main" {
-  count = var.database_type == "postgresql" ? 1 : 0
+# Creates a secure, random password for the database user.
+resource "random_password" "cloud_sql_password" {
+  length  = 16
+  special = true
+}
 
-  name             = "sara-db-instance"
-  database_version = "POSTGRES_15"
-  region           = var.region
-  project          = var.project_id
+# Creates a secret in Google Secret Manager to store the password.
+resource "google_secret_manager_secret" "cloud_sql_password" {
+  project   = module.project-services.project_id
+  secret_id = "sara-cloud-sql-password-${random_id.id.hex}"
 
-  timeouts {
-    create = "30m"
-    update = "30m"
-  }
-
-  settings {
-    tier              = "db-custom-1-3840"
-    disk_autoresize   = true
-    disk_size         = 10
-    disk_type         = "PD_SSD"
-    user_labels       = var.labels
-    ip_configuration {
-      ipv4_enabled    = false
-      private_network = google_compute_network.main.id
-    }
-    database_flags {
-      name  = "cloudsql.iam_authentication"
-      value = "on"
+  # FINAL, DEFINITIVE FIX: This restores the correct user_managed replication
+  # block, ensuring the secret is created in the same region as the app.
+  # This syntax is required by your specific provider versions.
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
     }
   }
 
-  deletion_protection = var.deletion_protection
-  depends_on          = [google_service_networking_connection.private_service_access]
+  labels     = var.labels
+  depends_on = [module.project-services]
 }
 
-# Create Database
-resource "google_sql_database" "database" {
-  count = var.database_type == "postgresql" ? 1 : 0
-
-  project         = var.project_id
-  name            = var.db_name
-  instance        = google_sql_database_instance.main[0].name
-  deletion_policy = "ABANDON"
-}
-
-# Create Cloud SQL User
-resource "google_sql_user" "service" {
-  count = var.database_type == "postgresql" ? 1 : 0
-
-  name     = var.db_user
-  project  = var.project_id
-  instance = google_sql_database_instance.main[0].name
-  # FINAL FIX: This now points to the correctly named password resource from secrets.tf
-  password = random_password.cloud_sql_password.result
-  deletion_policy = "ABANDON"
-}
-
-# Create SQL integration to Vertex AI
-resource "google_project_iam_member" "vertex_integration" {
-  count = var.database_type == "postgresql" ? 1 : 0
-
-  project = var.project_id
-  role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_sql_database_instance.main[0].service_account_email_address}"
+# Creates a new version of the secret with the generated password.
+resource "google_secret_manager_secret_version" "cloud_sql_password" {
+  secret      = google_secret_manager_secret.cloud_sql_password.id
+  secret_data = random_password.cloud_sql_password.result
 } 
 --- End of File: "C:\Users\just_\sara-v2\secrets.tf" --- 
  
@@ -812,31 +769,7 @@ Processing path: "C:\Users\just_\sara-v2\src\retrieval_service"
 Processing path: "C:\Users\just_\sara-v2\src\storage.tf" 
 ================================================================= 
  
-"C:\Users\just_\sara-v2\src\storage.tf" is a file. Printing its content... 
- 
---- File: "C:\Users\just_\sara-v2\src\storage.tf" --- 
-# Filename: storage.tf
-
-resource "google_storage_bucket" "sara_vault" {
-  # Bucket names must be globally unique, so we use the project ID as a prefix.
-  name          = "${var.project_id}-sara-documents-vault"
-  location      = var.region
-  project       = var.project_id
-  
-  # Enforces uniform access control, a security best practice.
-  uniform_bucket_level_access = true
-
-  # Deletes incomplete uploads after 1 day to keep the bucket clean.
-  lifecycle_rule {
-    action {
-      type = "AbortIncompleteMultipartUpload"
-    }
-    condition {
-      days_since_initiation = 1
-    }
-  }
-} 
---- End of File: "C:\Users\just_\sara-v2\src\storage.tf" --- 
+WARNING: "C:\Users\just_\sara-v2\src\storage.tf" is not a valid file or directory. Skipping. 
  
 ================================================================= 
 Processing path: "C:\Users\just_\sara-v2\src\docs\SARA_Roadmap.md" 

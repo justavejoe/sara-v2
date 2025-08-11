@@ -23,10 +23,23 @@ resource "google_sql_database_instance" "main" {
   region           = var.region
   project          = var.project_id
 
-  timeouts {
-    create = "30m"
-    update = "30m"
+  # We create the instance with minimal settings first.
+  # The detailed settings are applied in a subsequent step.
+  settings {
+    tier = "db-n1-standard-1" # Start with a basic tier
   }
+
+  deletion_protection = var.deletion_protection
+}
+
+# Apply the final settings in a separate step to avoid the API error
+resource "google_sql_database_instance" "main_configured" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  name             = google_sql_database_instance.main[0].name
+  database_version = "POSTGRES_15"
+  region           = var.region
+  project          = var.project_id
 
   settings {
     tier              = "db-custom-1-3840"
@@ -44,8 +57,8 @@ resource "google_sql_database_instance" "main" {
     }
   }
 
-  deletion_protection = var.deletion_protection
-  depends_on          = [google_service_networking_connection.private_service_access]
+  # Ensure this happens only after the initial instance is created
+  depends_on = [google_sql_database_instance.main, google_service_networking_connection.private_service_access]
 }
 
 # Create Database
@@ -54,7 +67,7 @@ resource "google_sql_database" "database" {
 
   project         = var.project_id
   name            = var.db_name
-  instance        = google_sql_database_instance.main[0].name
+  instance        = google_sql_database_instance.main_configured[0].name
   deletion_policy = "ABANDON"
 }
 
@@ -64,7 +77,7 @@ resource "google_sql_user" "service" {
 
   name            = var.db_user
   project         = var.project_id
-  instance        = google_sql_database_instance.main[0].name
+  instance        = google_sql_database_instance.main_configured[0].name
   password        = random_password.cloud_sql_password.result
   deletion_policy = "ABANDON"
 }
@@ -75,5 +88,5 @@ resource "google_project_iam_member" "vertex_integration" {
 
   project = var.project_id
   role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_sql_database_instance.main[0].service_account_email_address}"
+  member  = "serviceAccount:${google_sql_database_instance.main_configured[0].service_account_email_address}"
 }
