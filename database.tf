@@ -36,8 +36,9 @@ resource "google_sql_database_instance" "main" {
     user_labels       = var.labels
     ip_configuration {
       ipv4_enabled    = false
-      # CORRECTED: Point to the actual network resource ID from network.tf
-      private_network = google_compute_network.default.id
+      # CORRECTED: This now correctly points to the 'main' VPC network resource
+      # declared in network.tf.
+      private_network = google_compute_network.main.id
     }
     database_flags {
       name  = "cloudsql.iam_authentication"
@@ -46,7 +47,8 @@ resource "google_sql_database_instance" "main" {
   }
 
   deletion_protection = var.deletion_protection
-  # CORRECTED: Explicitly depend on the service networking connection being ready.
+  # This dependency is critical to prevent race conditions. It ensures the network
+  # is fully ready before trying to create the database instance.
   depends_on = [google_service_networking_connection.private_service_access]
 }
 
