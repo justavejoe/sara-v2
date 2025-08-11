@@ -1,0 +1,1134 @@
+Log generated on Mon 08/11/2025 at 11:07:07.08 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\.devcontainer" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\.devcontainer" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\.gitignore" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\app.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\app.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\app.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# Creates a single Service Account to be used by both Cloud Run services
+resource "google_service_account" "runsa" {
+  project      = module.project-services.project_id
+  account_id   = "sara-run-sa"
+  display_name = "SARA Cloud Run Service Account"
+}
+
+# Applies project-level permissions to the Cloud Run SA
+resource "google_project_iam_member" "allrun" {
+  for_each = toset([
+    "roles/cloudsql.client",
+    "roles/run.invoker",
+    "roles/aiplatform.user",
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/secretmanager.secretAccessor",
+    "roles/storage.objectAdmin",
+  ])
+
+  project = module.project-services.project_id
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+# Deploys the retrieval-service backend
+resource "google_cloud_run_v2_service" "retrieval_service" {
+  name                = "retrieval-service"
+  location            = var.region
+  project             = module.project-services.project_id
+  deletion_protection = var.deletion_protection
+
+  template {
+    annotations = {
+      "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main[0].connection_name
+    }
+
+    service_account = google_service_account.runsa.email
+    labels          = var.labels
+
+    containers {
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-retrieval-service:latest"
+      
+      env {
+        name  = "GCS_BUCKET_NAME"
+        value = data.google_storage_bucket.sara_vault.name
+      }
+      env {
+        name  = "DB_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "DB_REGION"
+        value = var.region
+      }
+      env {
+        name  = "DB_INSTANCE"
+        value = google_sql_database_instance.main[0].name
+      }
+      env {
+        # This is the final corrected line
+        name  = "DB_NAME"
+        value = google_sql_database.database[0].name
+      }
+      env {
+        name  = "DB_USER"
+        value = google_sql_user.service[0].name
+      }
+      env {
+        name = "DB_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.cloud_sql_password.secret_id
+            version = "latest"
+          }
+        }
+      }
+    }
+
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.main.id
+        subnetwork = google_compute_subnetwork.subnetwork.id
+        tags       = ["direct-vpc-egress"]
+      }
+      egress = "PRIVATE_RANGES_ONLY"
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.allrun
+  ]
+}
+
+# Deploys the frontend-service
+resource "google_cloud_run_v2_service" "frontend_service" {
+  name                = "frontend-service"
+  location            = var.region
+  project             = module.project-services.project_id
+  deletion_protection = var.deletion_protection
+
+  template {
+    service_account = google_service_account.runsa.email
+    labels          = var.labels
+
+    containers {
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-frontend-service:latest"
+      env {
+        name  = "SERVICE_URL"
+        value = google_cloud_run_v2_service.retrieval_service.uri
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.allrun
+  ]
+}
+
+# Allows the frontend service to securely call the backend retrieval service.
+resource "google_cloud_run_v2_service_iam_member" "retrieval_service_invoker" {
+  project  = google_cloud_run_v2_service.retrieval_service.project
+  location = google_cloud_run_v2_service.retrieval_service.location
+  name     = google_cloud_run_v2_service.retrieval_service.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+# Sets the frontend service to be publicly accessible
+resource "google_cloud_run_v2_service_iam_member" "noauth_frontend" {
+  project  = google_cloud_run_v2_service.frontend_service.project
+  location = google_cloud_run_v2_service.frontend_service.location
+  name     = google_cloud_run_v2_service.frontend_service.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+} 
+--- End of File: "C:\Users\just_\sara-v2\app.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\backend.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\backend.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\backend.tf" --- 
+# Filename: backend.tf
+
+terraform {
+  backend "gcs" {
+    bucket  = "sara-project-v2-sara-documents-vault" # Use the exact name of your GCS bucket
+    prefix  = "terraform/state"
+  }
+} 
+--- End of File: "C:\Users\just_\sara-v2\backend.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\cloudbuild.yaml" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\database.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\database.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\database.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# Handle Database Instance
+resource "google_sql_database_instance" "main" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  name             = "sara-db-instance"
+  database_version = "POSTGRES_15"
+  region           = var.region
+  project          = var.project_id
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+  }
+
+  settings {
+    tier              = "db-custom-1-3840"
+    disk_autoresize   = true
+    disk_size         = 10
+    disk_type         = "PD_SSD"
+    user_labels       = var.labels
+    ip_configuration {
+      ipv4_enabled    = false
+      # CORRECTED: This now correctly points to the 'main' VPC network resource
+      # declared in network.tf.
+      private_network = google_compute_network.main.id
+    }
+    database_flags {
+      name  = "cloudsql.iam_authentication"
+      value = "on"
+    }
+  }
+
+  deletion_protection = var.deletion_protection
+  # This dependency is critical to prevent race conditions. It ensures the network
+  # is fully ready before trying to create the database instance.
+  depends_on = [google_service_networking_connection.private_service_access]
+}
+
+# Create Database
+resource "google_sql_database" "database" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project         = var.project_id
+  name            = var.db_name
+  instance        = google_sql_database_instance.main[0].name
+  deletion_policy = "ABANDON"
+}
+
+# Create Cloud SQL User
+resource "google_sql_user" "service" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  name            = var.db_user
+  project         = var.project_id
+  instance        = google_sql_database_instance.main[0].name
+  password        = random_password.password.result
+  deletion_policy = "ABANDON"
+}
+
+# Create SQL integration to Vertex AI
+resource "google_project_iam_member" "vertex_integration" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_sql_database_instance.main[0].service_account_email_address}"
+} 
+--- End of File: "C:\Users\just_\sara-v2\database.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\main.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\main.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\main.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# THIS IS THE MISSING BLOCK
+provider "google" {
+  project = "sara-project-v2"
+  region  = "us-central1"
+}
+
+module "project-services" {
+  source                      = "terraform-google-modules/project-factory/google//modules/project_services"
+  version                     = "17.0.0"
+  disable_services_on_destroy = false
+
+  project_id  = var.project_id
+  enable_apis = var.enable_apis
+
+  activate_apis = compact([
+    "aiplatform.googleapis.com",
+    var.database_type == "alloydb" ? "alloydb.googleapis.com" : "",
+    "artifactregistry.googleapis.com",
+    "cloudapis.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "compute.googleapis.com",
+    "config.googleapis.com",
+    "dns.googleapis.com",
+    "iam.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com",
+    "serviceusage.googleapis.com",
+    var.database_type == "spanner" ? "spanner.googleapis.com" : "",
+    "sqladmin.googleapis.com",
+    "storage-api.googleapis.com",
+    "storage.googleapis.com",
+  ])
+}
+
+resource "random_id" "id" {
+  byte_length = 4
+} 
+--- End of File: "C:\Users\just_\sara-v2\main.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\network.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\network.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\network.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# Configure PSC
+# # Create VPC
+resource "google_compute_network" "main" {
+  name                    = "genai-rag-psc-${random_id.id.hex}"
+  auto_create_subnetworks = false
+  project                 = module.project-services.project_id
+}
+
+# # Create Subnet
+resource "google_compute_subnetwork" "subnetwork" {
+  name          = "genai-rag-psc-subnet-${random_id.id.hex}"
+  ip_cidr_range = "10.2.0.0/16"
+  region        = var.region
+  network       = google_compute_network.main.id
+  project       = module.project-services.project_id
+}
+
+# # Configure IP
+resource "google_compute_address" "default" {
+  project      = module.project-services.project_id
+  name         = "psc-compute-address"
+  region       = var.region
+  address_type = "INTERNAL"
+  subnetwork   = google_compute_subnetwork.subnetwork.id
+  address      = "10.2.0.42"
+}
+
+# # Create VPC / PSC forwarding rule
+resource "google_compute_forwarding_rule" "default" {
+  project               = module.project-services.project_id
+  name                  = "psc-forwarding-rule-${google_sql_database_instance.main[0].name}"
+  region                = var.region
+  network               = google_compute_network.main.id
+  ip_address            = google_compute_address.default.self_link
+  load_balancing_scheme = ""
+  target                = google_sql_database_instance.main[0].psc_service_attachment_link
+}
+
+# # Create DNS Zone for PSC
+resource "google_dns_managed_zone" "psc" {
+  project     = module.project-services.project_id
+  name        = "${google_sql_database_instance.main[0].name}-${random_id.id.hex}-zone"
+  dns_name    = "${google_sql_database_instance.main[0].region}.sql.goog."
+  description = "Regional zone for Cloud SQL PSC instances"
+  visibility  = "private"
+  private_visibility_config {
+    networks {
+      network_url = google_compute_network.main.id
+    }
+  }
+}
+
+# # Add SQL DNS record
+resource "google_dns_record_set" "psc" {
+  project      = module.project-services.project_id
+  name         = google_sql_database_instance.main[0].dns_name
+  type         = "A"
+  ttl          = 300
+  managed_zone = google_dns_managed_zone.psc.name
+  rrdatas      = [google_compute_address.default.address]
+}
+resource "google_project_service" "service_networking" {
+  project = var.project_id
+  service    = "servicenetworking.googleapis.com"
+}
+
+resource "google_compute_global_address" "private_ip_address" {
+  project       = var.project_id
+  name          = "private-ip-for-google-services"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.main.id
+}
+
+resource "google_service_networking_connection" "private_service_access" {
+  network                 = google_compute_network.main.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
+
+  depends_on = [google_project_service.service_networking]
+} 
+--- End of File: "C:\Users\just_\sara-v2\network.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\outputs.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\outputs.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\outputs.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+output "deployment_ip_address" {
+  description = "Web URL link"
+  value       = google_cloud_run_v2_service.frontend_service.uri
+}
+ 
+--- End of File: "C:\Users\just_\sara-v2\outputs.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\pyproject.toml" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\README.md" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\scripts" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\scripts" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\secrets.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\secrets.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\secrets.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# Handle Database Instance
+resource "google_sql_database_instance" "main" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  name             = "sara-db-instance"
+  database_version = "POSTGRES_15"
+  region           = var.region
+  project          = var.project_id
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+  }
+
+  settings {
+    tier              = "db-custom-1-3840"
+    disk_autoresize   = true
+    disk_size         = 10
+    disk_type         = "PD_SSD"
+    user_labels       = var.labels
+    ip_configuration {
+      ipv4_enabled    = false
+      private_network = google_compute_network.main.id
+    }
+    database_flags {
+      name  = "cloudsql.iam_authentication"
+      value = "on"
+    }
+  }
+
+  deletion_protection = var.deletion_protection
+  depends_on          = [google_service_networking_connection.private_service_access]
+}
+
+# Create Database
+resource "google_sql_database" "database" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project         = var.project_id
+  name            = var.db_name
+  instance        = google_sql_database_instance.main[0].name
+  deletion_policy = "ABANDON"
+}
+
+# Create Cloud SQL User
+resource "google_sql_user" "service" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  name     = var.db_user
+  project  = var.project_id
+  instance = google_sql_database_instance.main[0].name
+  # FINAL FIX: This now points to the correctly named password resource from secrets.tf
+  password = random_password.cloud_sql_password.result
+  deletion_policy = "ABANDON"
+}
+
+# Create SQL integration to Vertex AI
+resource "google_project_iam_member" "vertex_integration" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_sql_database_instance.main[0].service_account_email_address}"
+} 
+--- End of File: "C:\Users\just_\sara-v2\secrets.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\storage.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\storage.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\storage.tf" --- 
+# Filename: storage.tf
+
+# This tells Terraform to get data about an EXISTING bucket
+# instead of trying to create a new one.
+data "google_storage_bucket" "sara_vault" {
+  name = "${var.project_id}-sara-documents-vault"
+} 
+--- End of File: "C:\Users\just_\sara-v2\storage.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\terraform.tfstate" 
+================================================================= 
+ 
+WARNING: "C:\Users\just_\sara-v2\terraform.tfstate" is not a valid file or directory. Skipping. 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\terraform.tfstate.backup" 
+================================================================= 
+ 
+WARNING: "C:\Users\just_\sara-v2\terraform.tfstate.backup" is not a valid file or directory. Skipping. 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\terraform.tfvars" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\variables.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\variables.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\variables.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# --------------------------------------------------
+# VARIABLES
+# Set these before applying the configuration
+# --------------------------------------------------
+
+variable "project_id" {
+  type        = string
+  description = "The project ID to deploy to."
+  default     = "sara-project-v2"
+}
+
+variable "region" {
+  type        = string
+  description = "Google Cloud Region"
+  default     = "us-central1"
+}
+
+variable "labels" {
+  type        = map(string)
+  description = "A map of labels to apply to contained resources."
+  default     = { "genai-rag" = true }
+}
+
+variable "enable_apis" {
+  type        = string
+  description = "Whether or not to enable underlying apis in this solution. ."
+  default     = true
+}
+
+variable "deletion_protection" {
+  type        = string
+  description = "Whether or not to protect Cloud SQL resources from deletion when solution is modified or changed."
+  default     = false
+}
+
+variable "frontend_container" {
+  type        = string
+  description = "The public Artifact Registry URI for the frontend container"
+  default     = "us-docker.pkg.dev/google-samples/containers/jss/rag-frontend-service:v0.0.2" # "us-central1-docker.pkg.dev/analytics-use-case-3-2/cloud-run-source-deploy/frontend-service"
+}
+
+variable "retrieval_container" {
+  type        = string
+  description = "The public Artifact Registry URI for the retrieval container"
+  default     = "us-docker.pkg.dev/google-samples/containers/jss/rag-retrieval-service:v0.0.3" # "us-central1-docker.pkg.dev/analytics-use-case-3-2/cloud-run-source-deploy/retrieval-service"
+}
+
+variable "database_type" {
+  type        = string
+  description = "Cloud SQL MySQL, Cloud SQL PostgreSQL, AlloyDB, or Cloud Spanner"
+  default     = "postgresql"
+  validation {
+    condition     = contains(["mysql", "postgresql", "alloydb", "spanner"], var.database_type)
+    error_message = "Must be \"alloydb\", \"mysql\", \"postgresql\" or \"spanner\"."
+  }
+}
+
+variable "db_user" {
+  description = "The username for the Cloud SQL database user."
+  type        = string
+}
+
+variable "db_pass" {
+  description = "The password for the Cloud SQL database user."
+  type        = string
+  sensitive   = true
+}
+
+variable "db_name" {
+  description = "The name of the Cloud SQL database."
+  type        = string
+} 
+--- End of File: "C:\Users\just_\sara-v2\variables.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\versions.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\versions.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\versions.tf" --- 
+/**
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+terraform {
+  required_version = ">= 1.5"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 5.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.11"
+    }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.4"
+    }
+    postgresql = {
+      source  = "cyrilgdn/postgresql"
+      version = "~> 1.22.0"
+    }
+  }
+
+  provider_meta "google" {
+    module_name = "blueprints/terraform/terraform-genai-rag/v0.2.1"
+  }
+} 
+--- End of File: "C:\Users\just_\sara-v2\versions.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\.devcontainer\devcontainer.json" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\scripts\run_migrations.sh" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\docs" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\docs" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\frontend_service" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\storage.tf" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\storage.tf" is a file. Printing its content... 
+ 
+--- File: "C:\Users\just_\sara-v2\src\storage.tf" --- 
+# Filename: storage.tf
+
+resource "google_storage_bucket" "sara_vault" {
+  # Bucket names must be globally unique, so we use the project ID as a prefix.
+  name          = "${var.project_id}-sara-documents-vault"
+  location      = var.region
+  project       = var.project_id
+  
+  # Enforces uniform access control, a security best practice.
+  uniform_bucket_level_access = true
+
+  # Deletes incomplete uploads after 1 day to keep the bucket clean.
+  lifecycle_rule {
+    action {
+      type = "AbortIncompleteMultipartUpload"
+    }
+    condition {
+      days_since_initiation = 1
+    }
+  }
+} 
+--- End of File: "C:\Users\just_\sara-v2\src\storage.tf" --- 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\docs\SARA_Roadmap.md" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\app.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\Dockerfile" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\pyproject.toml" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\requirements.txt" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\run_app.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\static" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\frontend_service\static" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\templates" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\frontend_service\templates" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\static\index.css" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\static\index.js" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\frontend_service\templates\index.html" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\.venv" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\alembic" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic.ini" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\app" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\app" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\data" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\data" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\datastore" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\db.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\Dockerfile" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\main.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\models.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\pyproject.toml" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\requirements.txt" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\run_app.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\run_load_data.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\run_process_papers.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\run_process_patents.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\views" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\views" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\__init__.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\__pycache__" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\__pycache__" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Include" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\.venv\Include" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Lib" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\.venv\Lib" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\pyvenv.cfg" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\activate" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\activate.bat" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\Activate.ps1" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\deactivate.bat" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\pip.exe" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\pip3.12.exe" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\pip3.exe" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\python.exe" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\.venv\Scripts\pythonw.exe" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\env.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\README" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\script.py.mako" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\versions" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\alembic\versions" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\__pycache__" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\alembic\__pycache__" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\versions\c6bf373d6a59_create_initial_database_tables.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\versions\__pycache__" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\alembic\versions\__pycache__" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\versions\__pycache__\c6bf373d6a59_create_initial_database_tables.cpython-312.pyc" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\__pycache__\env.cpython-311.pyc" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\alembic\__pycache__\env.cpython-312.pyc" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\app\routes.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\app\__init__.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\data\papers_to_process" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\data\papers_to_process" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\data\patents_to_process" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\data\patents_to_process" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore\datastore.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore\providers" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\datastore\providers" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore\__init__.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore\__pycache__" 
+================================================================= 
+ 
+"C:\Users\just_\sara-v2\src\retrieval_service\datastore\__pycache__" is a directory. Printing contents of .tf files within... 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore\providers\cloudsql_postgres.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\datastore\providers\__init__.py" 
+================================================================= 
+ 
+================================================================= 
+Processing path: "C:\Users\just_\sara-v2\src\retrieval_service\views\upload.py" 
+================================================================= 
+ 

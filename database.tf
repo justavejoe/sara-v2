@@ -36,8 +36,6 @@ resource "google_sql_database_instance" "main" {
     user_labels       = var.labels
     ip_configuration {
       ipv4_enabled    = false
-      # CORRECTED: This now correctly points to the 'main' VPC network resource
-      # declared in network.tf.
       private_network = google_compute_network.main.id
     }
     database_flags {
@@ -47,9 +45,7 @@ resource "google_sql_database_instance" "main" {
   }
 
   deletion_protection = var.deletion_protection
-  # This dependency is critical to prevent race conditions. It ensures the network
-  # is fully ready before trying to create the database instance.
-  depends_on = [google_service_networking_connection.private_service_access]
+  depends_on          = [google_service_networking_connection.private_service_access]
 }
 
 # Create Database
@@ -69,7 +65,7 @@ resource "google_sql_user" "service" {
   name            = var.db_user
   project         = var.project_id
   instance        = google_sql_database_instance.main[0].name
-  password        = random_password.password.result
+  password        = random_password.cloud_sql_password.result
   deletion_policy = "ABANDON"
 }
 
