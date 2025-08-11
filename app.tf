@@ -43,6 +43,14 @@ resource "google_project_iam_member" "ai_user" {
   member  = "serviceAccount:${google_service_account.runsa.email}"
 }
 
+# Grant the service account read/write access to the application's data vault.
+resource "google_storage_bucket_iam_member" "data_vault_access" {
+  bucket = data.google_storage_bucket.sara_vault.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+
 # Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
   name     = "retrieval-service"
@@ -58,7 +66,8 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
       image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-retrieval-service:latest"
       env {
         name  = "GCS_BUCKET_NAME"
-        value = google_storage_bucket.sara_vault.name
+        # FINAL FIX: This now correctly references the data source.
+        value = data.google_storage_bucket.sara_vault.name
       }
       env {
         name  = "DB_NAME"
