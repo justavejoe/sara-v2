@@ -89,14 +89,14 @@ steps:
         curl -o cloud_sql_proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v1.33.9/cloud-sql-proxy.linux.amd64
         chmod +x cloud_sql_proxy
         ./cloud_sql_proxy -instances=${_DB_CONNECTION_NAME}=tcp:5432 &
-        PROXY_PID=$!
+        PROXY_PID=$$!
         
         # Wait for the proxy to be ready
         echo "Waiting for proxy to start..."
         while ! nc -z 127.0.0.1 5432; do
           sleep 1
           # Check if the proxy has failed to start
-          if ! kill -0 $PROXY_PID 2>/dev/null; then
+          if ! kill -0 $$PROXY_PID 2>/dev/null; then
             echo "Proxy has failed to start."
             exit 1
           fi
