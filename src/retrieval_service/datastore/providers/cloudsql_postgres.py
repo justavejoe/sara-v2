@@ -1,112 +1,70 @@
-import asyncio
-from typing import Literal, List
-import asyncpg
+import os
+import sqlalchemy
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+# Use psycopg2 as specified in requirements.txt
 from google.cloud.sql.connector import Connector, IPTypes
-from pgvector.asyncpg import register_vector
 from pydantic import BaseModel
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from .. import datastore
 
-class Config(BaseModel, datastore.AbstractConfig):
-    kind: Literal["cloudsql-postgres"]
-    project: str
-    region: str
-    instance: str
+class Config(BaseModel):
+    kind: str
+    project: str = None
+    region: str = None
+    instance: str = None
     user: str
-    password: str
+    password: str = None   # Allow password to be optional in config if set via env var
     database: str
 
-class Client(datastore.Client[Config]):
-    __pool: AsyncEngine
-
-    @datastore.classproperty
-    def kind(cls):
-        return "cloudsql-postgres"
-
-    def __init__(self, pool: AsyncEngine):
-        self.__pool = pool
-
-    @classmethod
-    async def create(cls, config: Config) -> "Client":
-        loop = asyncio.get_running_loop()
-        async def getconn() -> asyncpg.Connection:
-            async with Connector(loop=loop) as connector:
-                conn: asyncpg.Connection = await connector.connect_async(
-                    f"{config.project}:{config.region}:{config.instance}",
-                    "asyncpg",
-                    user=f"{config.user}",
-                    password=f"{config.password}",
-                    db=f"{config.database}",
-                    ip_type=IPTypes.PSC,
-                )
-            await conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
-            await register_vector(conn)
-            return conn
-        pool = create_async_engine("postgresql+asyncpg://", async_creator=getconn)
-        if pool is None:
-            raise TypeError("pool not instantiated")
-        return cls(pool)
-
-    async def initialize_data(self, paper_chunks: list[dict]) -> None:
-        """
-        Initializes the database with a list of chunks from any source.
-        NOTE: This method assumes the table has already been created by Alembic.
-        """
-        async with self.__pool.connect() as conn:
-            # The DROP TABLE and CREATE TABLE commands have been removed.
-            # Alembic is now responsible for all schema management.
-            await conn.execute(
-                text(
-                    """
-                    INSERT INTO document_chunks (source_filename, title, authors, publication_date, content, embedding) 
-                    VALUES (:source_filename, :title, :authors, :publication_date, :content, :embedding)
-                    """
-                ),
-                paper_chunks
-            )
-            await conn.commit()
-
-    async def search_documents(
-        self, query_embedding: list[float], top_k: int
-    ) -> list[dict]:
-        async with self.__pool.connect() as conn:
-            s = text(
-                """
-                SELECT 
-                    source_filename, 
-                    title, 
-                    authors, 
-                    publication_date,
-                    content, 
-                    1 - (embedding <=> :query_embedding) AS similarity
-                FROM document_chunks
-                ORDER BY similarity DESC
-                LIMIT :top_k
-                """
-            )
-            params = {
-                "query_embedding": query_embedding,
-                "top_k": top_k,
-            }
-            results = (await conn.execute(s, params)).mappings().fetchall()
-        return [dict(r) for r in results]
-
-    async def close(self):
-        await self.__pool.dispose()
+class CloudSQLPostgresDatastore:
+    def __init__(self, config: Config):
+        self.config = config
+        # Ensure password is set, preferring environment variable if not in config
+        if not self.config.password:
+            self.config.password = os.environ.get("DB_PASSWORD")
         
-    async def add_documents(self, paper_chunks: list[dict]) -> None:
+        self.engine = self._create_engine()
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+
+    def _create_engine(self):
         """
-        Adds a list of document chunks to the existing table.
+        Creates a SQLAlchemy engine for connecting to Cloud SQL for PostgreSQL.
         """
-        async with self.__pool.connect() as conn:
-            await conn.execute(
-                text(
-                    """
-                    INSERT INTO document_chunks (source_filename, title, authors, publication_date, content, embedding) 
-                    VALUES (:source_filename, :title, :authors, :publication_date, :content, :embedding)
-                    """
-                ),
-                paper_chunks
+        if not all([self.config.project, self.config.region, self.config.instance]):
+            # Fallback for local development or migration steps
+            db_host = os.environ.get("DB_HOST", "127.0.0.1")
+            db_port = os.environ.get("DB_PORT", "5432")
+            connection_string = (
+                f"postgresql+psycopg2://{self.config.user}:{self.config.password}@"
+                f"{db_host}:{db_port}/{self.config.database}"
             )
-            await conn.commit()
+            return create_engine(connection_string)
+
+        # Use Cloud SQL Connector for Cloud Run environment
+        def getconn():
+            connector = Connector()
+            conn = connector.connect(
+                f"{self.config.project}:{self.config.region}:{self.config.instance}",
+                "psycopg2", # Use psycopg2 driver
+                user=self.config.user,
+                password=self.config.password,
+                db=self.config.database,
+                # Use PRIVATE IP if available, otherwise PUBLIC
+                ip_type=IPTypes.PRIVATE if os.environ.get("PRIVATE_IP") else IPTypes.PUBLIC,
+            )
+            return conn
+
+        engine = create_engine(
+            "postgresql+psycopg2://", # Use psycopg2 dialect
+            creator=getconn,
+        )
+        return engine
+
+    def get_session(self):
+        return self.SessionLocal()
+
+    def close(self):
+        """
+        Closes the database engine.
+        """
+        if self.engine:
+            self.engine.dispose()

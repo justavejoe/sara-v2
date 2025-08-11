@@ -74,24 +74,42 @@ steps:
       - "Push frontend-service"
 
   # 8. Run Database Migrations with Cloud SQL Proxy
-  - name: 'python:3.9'
+  # Changed base image to gcloud builder to allow dynamic discovery of connection name
+  - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Run DB Migrations'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         set -e
-        # Install all necessary dependencies
-        apt-get update && apt-get install -y curl netcat-traditional postgresql-client
-        pip install -r src/retrieval_service/requirements.txt
+        # Install necessary dependencies (python3, pip, postgresql-client, curl, netcat)
+        # The gcloud image is Debian-based.
+        apt-get update && apt-get install -y curl netcat-traditional postgresql-client python3 python3-pip
+
+        # Install Python requirements for Alembic
+        pip3 install -r src/retrieval_service/requirements.txt
+
+        # Discover the DB Connection Name using gcloud
+        # Assuming the instance name is 'sara-db-instance' as defined in database.tf
+        INSTANCE_NAME="sara-db-instance"
+        echo "Discovering DB Connection Name for instance: $$INSTANCE_NAME"
+        DB_CONNECTION_NAME=$$(gcloud sql instances describe $$INSTANCE_NAME --format="value(connectionName)" --project=${PROJECT_ID})
         
+        if [ -z "$$DB_CONNECTION_NAME" ] ; then
+           echo "Error: Could not determine DB_CONNECTION_NAME."
+           exit 1
+        fi
+        echo "Discovered DB Connection Name: $$DB_CONNECTION_NAME"
+
         # Download and start the Cloud SQL Auth Proxy
         echo "Downloading Cloud SQL Auth Proxy..."
         curl -o cloud_sql_proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.10.0/cloud-sql-proxy.linux.amd64
         chmod +x cloud_sql_proxy
-        ./cloud_sql_proxy -instances=${_DB_CONNECTION_NAME}=tcp:5432 &
-        PROXY_PID=$$!
         
+        # Use the discovered connection name
+        ./cloud_sql_proxy -instances=$$DB_CONNECTION_NAME=tcp:5432 &
+        PROXY_PID=$$!
+
         # Wait for the proxy to be ready
         echo "Waiting for proxy to start..."
         while ! nc -z 127.0.0.1 5432; do
@@ -99,18 +117,23 @@ steps:
           if ! kill -0 $$PROXY_PID 2>/dev/null; then echo "Proxy has failed to start."; exit 1; fi
         done
         echo "Proxy started successfully."
-        
-        # FINAL FIX: Connect to the 'postgres' DB and assign ownership of our new DB to our user.
+
+        # Assign database ownership.
         echo "Assigning database ownership..."
         export PGPASSWORD=$$DB_PASS
         psql "host=127.0.0.1 port=5432 sslmode=disable dbname=postgres user=$$DB_USER" -c "ALTER DATABASE \"$$DB_NAME\" OWNER TO \"$$DB_USER\";"
-        
+
         # Run the database migrations
         echo "Running Alembic migrations..."
         cd src/retrieval_service
-        alembic upgrade head
-        echo "Migrations complete."
         
+        # Explicitly set the connection URL for Alembic (used by env.py)
+        export SQLALCHEMY_DATABASE_URI="postgresql+psycopg2://$${DB_USER}:$${DB_PASS}@127.0.0.1:5432/$${DB_NAME}"
+        
+        # Ensure alembic is called via the installed python environment
+        python3 -m alembic upgrade head
+        echo "Migrations complete."
+
         # Stop the proxy
         kill $$PROXY_PID
     env:
@@ -131,9 +154,8 @@ substitutions:
   _DB_USER: "sara-user"
   _DB_PASS: "secure-password-placeholder"
   _DB_NAME: "sara-db"
-  _DB_CONNECTION_NAME: ""
+  # _DB_CONNECTION_NAME: "" # This line has been removed
 
 # Specify the logging option
 options:
   logging: CLOUD_LOGGING_ONLY
-  

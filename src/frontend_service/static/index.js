@@ -2,68 +2,122 @@ document.addEventListener("DOMContentLoaded", () => {
     const uploadForm = document.getElementById("upload-form");
     const fileInput = document.getElementById("file-input");
     const messageArea = document.getElementById("message-area");
+    const fileListDisplay = document.getElementById("file-list");
+    const uploadButton = document.getElementById("upload-button");
+    const searchForm = document.getElementById("search-form");
+    const searchInput = document.getElementById("search-input");
+    const conversationLog = document.getElementById("conversation-log");
 
-    // Handle form submission
-    uploadForm.addEventListener("submit", (event) => {
-        event.preventDefault(); // Prevent the default form redirect
-
-        const files = fileInput.files;
-        if (files.length === 0) {
-            messageArea.textContent = "Please select a file to upload.";
-            return;
-        }
-
-        // We'll upload the first selected file. This can be extended to handle multiple files.
-        const fileToUpload = files[0];
-        messageArea.textContent = `Uploading ${fileToUpload.name}...`;
-        
-        // Clear the file input for the next upload
-        uploadForm.reset(); 
-
-        uploadFile(fileToUpload, messageArea);
-    });
-});
-
-/**
- * Handles the entire file upload process using a GCS signed URL.
- * @param {File} file The file object to upload.
- * @param {HTMLElement} messageArea The UI element for displaying status.
- */
-async function uploadFile(file, messageArea) {
-    try {
-        // 1. Get the secure, signed URL from our backend
-        const getUrlResponse = await fetch("/documents/generate-upload-url", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ filename: file.name }),
+    // Update file list display when files are selected
+    if (fileInput) {
+        fileInput.addEventListener("change", () => {
+            const files = fileInput.files;
+            if (files.length > 0) {
+                fileListDisplay.textContent = "Selected: " + Array.from(files).map(f => f.name).join(", ");
+            } else {
+                fileListDisplay.textContent = "";
+            }
         });
-
-        if (!getUrlResponse.ok) {
-            const errorData = await getUrlResponse.json();
-            throw new Error(errorData.error || "Could not get signed URL.");
-        }
-
-        const { signedUrl } = await getUrlResponse.json();
-
-        // 2. Upload the file directly to Google Cloud Storage using the signed URL
-        const uploadResponse = await fetch(signedUrl, {
-            method: "PUT",
-            headers: {
-                "Content-Type": "application/pdf", // Ensure this matches the type in the backend
-            },
-            body: file,
-        });
-
-        if (!uploadResponse.ok) {
-            throw new Error("File upload to GCS failed.");
-        }
-
-        messageArea.textContent = `✅ Success! "${file.name}" is uploaded and will be processed.`;
-
-    } catch (error) {
-        console.error("Upload process failed:", error);
-        messageArea.textContent = `❌ Upload failed: ${error.message}`;
     }
-}
+
+    // Handle upload form submission
+    if (uploadForm) {
+        uploadForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const files = fileInput.files;
+
+            if (files.length === 0) {
+                messageArea.textContent = "Please select files to upload.";
+                messageArea.className = "status-message error";
+                return;
+            }
+
+            messageArea.textContent = `Uploading ${files.length} file(s)...`;
+            messageArea.className = "status-message info";
+            uploadButton.disabled = true;
+
+            const formData = new FormData();
+            for (const file of files) {
+                formData.append("files", file);
+            }
+
+            try {
+                // Use the /api/upload endpoint provided by the frontend service
+                const response = await fetch("/api/upload", {
+                    method: "POST",
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || "Upload failed.");
+                }
+
+                const result = await response.json();
+                messageArea.textContent = `✅ Success! ${result.message || "Files uploaded."}`;
+                messageArea.className = "status-message success";
+                
+                // Clear the form
+                uploadForm.reset();
+                fileListDisplay.textContent = "";
+            } catch (error) {
+                console.error("Upload process failed:", error);
+                messageArea.textContent = `❌ Upload failed: ${error.message}`;
+                messageArea.className = "status-message error";
+            } finally {
+                uploadButton.disabled = false;
+            }
+        });
+    }
+
+    // Handle search form submission
+    if (searchForm) {
+        searchForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const query = searchInput.value;
+            if (!query) return;
+
+            // Display user message
+            const userMessageDiv = document.createElement("div");
+            userMessageDiv.className = "message user-message";
+            userMessageDiv.textContent = query;
+            conversationLog.appendChild(userMessageDiv);
+            searchInput.value = "";
+            conversationLog.scrollTop = conversationLog.scrollHeight;
+
+            try {
+                const response = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || "Search failed");
+                }
+                const results = await response.json();
+                
+                // Display bot response
+                const botMessageDiv = document.createElement("div");
+                botMessageDiv.className = "message bot-message";
+                if (results.length > 0) {
+                    botMessageDiv.innerHTML = results.map(doc => 
+                        `<div>
+                            <strong>${doc.title}</strong><br>
+                            <small>${doc.source}</small><br>
+                            <p>${doc.content.replace(/\n/g, '<br>')}</p>
+                        </div>`
+                    ).join('<hr>');
+                } else {
+                    botMessageDiv.textContent = "No results found.";
+                }
+                conversationLog.appendChild(botMessageDiv);
+                conversationLog.scrollTop = conversationLog.scrollHeight;
+
+            } catch (error) {
+                console.error("Search failed:", error);
+                const errorDiv = document.createElement("div");
+                errorDiv.className = "message error-message";
+                errorDiv.textContent = `Error: ${error.message}`;
+                conversationLog.appendChild(errorDiv);
+                conversationLog.scrollTop = conversationLog.scrollHeight;
+            }
+        });
+    }
+});

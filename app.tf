@@ -50,7 +50,6 @@ resource "google_storage_bucket_iam_member" "data_vault_access" {
   member = "serviceAccount:${google_service_account.runsa.email}"
 }
 
-
 # Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
   name     = "retrieval-service"
@@ -68,6 +67,22 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         name  = "GCS_BUCKET_NAME"
         value = google_storage_bucket.sara_vault.name
       }
+      
+      # Add required DB connection environment variables
+      env {
+        name  = "DB_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "DB_REGION"
+        value = var.region
+      }
+      env {
+        name  = "DB_INSTANCE"
+        value = google_sql_database_instance.main_configured[0].name
+      }
+      # End addition
+
       env {
         name  = "DB_NAME"
         value = google_sql_database.database[0].name
@@ -77,7 +92,8 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         value = google_sql_user.service[0].name
       }
       env {
-        name = "DB_PASSWORD_SECRET"
+        # Rename from DB_PASSWORD_SECRET to DB_PASSWORD for consistency with db.py/datastore
+        name = "DB_PASSWORD"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.cloud_sql_password.secret_id
@@ -93,7 +109,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
       }
       egress = "ALL_TRAFFIC"
     }
-  } # <-- THIS WAS THE MISSING CLOSING BRACE
+  }
 }
 
 # Deploys the frontend-service

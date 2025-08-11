@@ -1,10 +1,9 @@
 # src/retrieval_service/db.py
-
 import os
 from flask import g
-# This is the missing import statement
-from datastore.factory import create_datastore
-from datastore.providers.cloudsql_postgres import Config
+# Use relative imports for datastore
+from .datastore.factory import create_datastore
+from .datastore.providers.cloudsql_postgres import Config
 
 # This variable will hold the single, shared datastore client
 _datastore = None
@@ -22,16 +21,23 @@ def get_db():
             region=os.environ.get("DB_REGION"),
             instance=os.environ.get("DB_INSTANCE"),
             user=os.environ.get("DB_USER"),
+            # Password is automatically handled in the Datastore init
             password=os.environ.get("DB_PASSWORD"),
             database=os.environ.get("DB_NAME"),
         )
         g.datastore = create_datastore(db_config)
     
-    return g.datastore
+    # Return an active session from the datastore
+    if 'db_session' not in g:
+        g.db_session = g.datastore.get_session()
+        
+    return g.db_session
 
 def close_db(e=None):
     """Closes the database connection if it exists."""
-    datastore = g.pop('datastore', None)
-
-    if datastore is not None:
-        datastore.close()
+    # Close the session used for the request
+    db_session = g.pop('db_session', None)
+    if db_session is not None:
+        db_session.close()
+    
+    # Note: We don't close the entire datastore engine here, only the session.

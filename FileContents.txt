@@ -1,4 +1,4 @@
-Log generated on Sun 08/10/2025 at 17:47:47.83 
+Log generated on Mon 08/11/2025 at 14:18:42.50 
  
 ================================================================= 
 Processing path: "C:\Users\just_\sara-v2\.devcontainer" 
@@ -86,58 +86,54 @@ resource "google_service_account" "runsa" {
   display_name = "SARA Cloud Run Service Account"
 }
 
-# Applies project-level permissions to the Cloud Run SA
-resource "google_project_iam_member" "allrun" {
-  for_each = toset([
-    "roles/cloudsql.client",
-    "roles/run.invoker",
-    "roles/aiplatform.user",
-    "roles/iam.serviceAccountTokenCreator",
-    "roles/secretmanager.secretAccessor",
-    "roles/storage.objectAdmin",
-  ])
+# Grant the service account access to the SQL password secret
+resource "google_secret_manager_secret_iam_member" "password_accessor" {
+  project   = google_secret_manager_secret.cloud_sql_password.project
+  secret_id = google_secret_manager_secret.cloud_sql_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runsa.email}"
+}
 
+# Grant the service account access to the Cloud SQL instance
+resource "google_project_iam_member" "sql_client" {
   project = module.project-services.project_id
-  role    = each.key
+  role    = "roles/cloudsql.client"
   member  = "serviceAccount:${google_service_account.runsa.email}"
 }
 
+# Grant the service account access to Vertex AI
+resource "google_project_iam_member" "ai_user" {
+  project = module.project-services.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+# Grant the service account read/write access to the application's data vault.
+resource "google_storage_bucket_iam_member" "data_vault_access" {
+  bucket = google_storage_bucket.sara_vault.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.runsa.email}"
+}
+
+
 # Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
-  name                = "retrieval-service"
-  location            = var.region
-  project             = module.project-services.project_id
-  deletion_protection = var.deletion_protection
+  name     = "retrieval-service"
+  location = var.region
+  project  = module.project-services.project_id
 
   template {
     annotations = {
-      "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main[0].connection_name
+      "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.main_configured[0].connection_name
     }
-
     service_account = google_service_account.runsa.email
-    labels          = var.labels
-
     containers {
-      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/retrieval-service:latest"
-      
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-retrieval-service:latest"
       env {
         name  = "GCS_BUCKET_NAME"
-        value = data.google_storage_bucket.sara_vault.name
+        value = google_storage_bucket.sara_vault.name
       }
       env {
-        name  = "DB_PROJECT"
-        value = var.project_id
-      }
-      env {
-        name  = "DB_REGION"
-        value = var.region
-      }
-      env {
-        name  = "DB_INSTANCE"
-        value = google_sql_database_instance.main[0].name
-      }
-      env {
-        # This is the final corrected line
         name  = "DB_NAME"
         value = google_sql_database.database[0].name
       }
@@ -146,7 +142,7 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         value = google_sql_user.service[0].name
       }
       env {
-        name = "DB_PASSWORD"
+        name = "DB_PASSWORD_SECRET"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.cloud_sql_password.secret_id
@@ -155,45 +151,32 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
         }
       }
     }
-
     vpc_access {
       network_interfaces {
         network    = google_compute_network.main.id
         subnetwork = google_compute_subnetwork.subnetwork.id
-        tags       = ["direct-vpc-egress"]
       }
-      egress = "PRIVATE_RANGES_ONLY"
+      egress = "ALL_TRAFFIC"
     }
-  }
-
-  depends_on = [
-    google_project_iam_member.allrun
-  ]
+  } # <-- THIS WAS THE MISSING CLOSING BRACE
 }
 
 # Deploys the frontend-service
 resource "google_cloud_run_v2_service" "frontend_service" {
-  name                = "frontend-service"
-  location            = var.region
-  project             = module.project-services.project_id
-  deletion_protection = var.deletion_protection
+  name     = "frontend-service"
+  location = var.region
+  project  = module.project-services.project_id
 
   template {
     service_account = google_service_account.runsa.email
-    labels          = var.labels
-
     containers {
-      image = "us-central1-docker.pkg.dev/${var.project_id}/sara-repo/frontend-service:latest"
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-frontend-service:latest"
       env {
         name  = "SERVICE_URL"
         value = google_cloud_run_v2_service.retrieval_service.uri
       }
     }
   }
-
-  depends_on = [
-    google_project_iam_member.allrun
-  ]
 }
 
 # Allows the frontend service to securely call the backend retrieval service.
@@ -226,7 +209,8 @@ Processing path: "C:\Users\just_\sara-v2\backend.tf"
 
 terraform {
   backend "gcs" {
-    bucket  = "sara-project-v2-sara-documents-vault" # Use the exact name of your GCS bucket
+    # CORRECTED: This now points to the dedicated Terraform state bucket.
+    bucket  = "sara-v2-tf-state-1b431b9d"
     prefix  = "terraform/state"
   }
 } 
@@ -260,7 +244,7 @@ steps:
       - 'build'
       - '--no-cache'
       - '-t'
-      - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/retrieval-service:latest'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-retrieval-service:latest'
       - './src/retrieval_service'
     waitFor:
       - "Setup Artifact Registry"
@@ -268,7 +252,7 @@ steps:
   # 3. Push the retrieval-service image
   - name: 'gcr.io/cloud-builders/docker'
     id: "Push retrieval-service"
-    args: ['push', 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/retrieval-service:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-retrieval-service:latest']
     waitFor:
       - "Build retrieval-service"
 
@@ -279,7 +263,7 @@ steps:
       - 'build'
       - '--no-cache'
       - '-t'
-      - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/frontend-service:latest'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-frontend-service:latest'
       - './src/frontend_service'
     waitFor:
       - "Setup Artifact Registry"
@@ -287,7 +271,7 @@ steps:
   # 5. Push the frontend-service image
   - name: 'gcr.io/cloud-builders/docker'
     id: "Push frontend-service"
-    args: ['push', 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/frontend-service:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-frontend-service:latest']
     waitFor:
       - "Build frontend-service"
 
@@ -301,52 +285,83 @@ steps:
   - name: 'hashicorp/terraform:1.5.7'
     id: "Terraform apply"
     entrypoint: 'terraform'
-    args: ['apply', '-auto-approve', '-var', 'project_id=${_PROJECT_ID}']
+    args:
+      - 'apply'
+      - '-auto-approve'
+      - '-var=project_id=${PROJECT_ID}'
+      - '-var=region=${_REGION}'
+      - '-var=db_user=${_DB_USER}'
+      - '-var=db_pass=${_DB_PASS}'
+      - '-var=db_name=${_DB_NAME}'
     waitFor:
       - "Terraform init"
       - "Push retrieval-service"
       - "Push frontend-service"
 
-  # 8. Run Database Migrations (Cloud SQL Auth Proxy v2.x)
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: "Run Database Migrations"
+  # 8. Run Database Migrations with Cloud SQL Proxy
+  - name: 'python:3.9'
+    id: 'Run DB Migrations'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        apt-get update && apt-get install -y python3 python3-pip
-        pip3 install -r src/retrieval_service/requirements.txt
-
-        rm -f cloud-sql-proxy
-        curl -o cloud-sql-proxy "${_CLOUD_SQL_PROXY_URL}"
-        chmod +x cloud-sql-proxy
-        chmod +x ./scripts/run_migrations.sh
-
-        # Start the proxy in the background using the correct v2.x syntax
-        ./cloud-sql-proxy "${_PROJECT_ID}:${_REGION}:${_DB_INSTANCE}" --address=0.0.0.0 --port=5432 &
-        PROXY_PID=$!
-        sleep 5  # Give the proxy time to start
-
-        ./scripts/run_migrations.sh
-
-        kill $PROXY_PID
+        set -e
+        # Install all necessary dependencies
+        apt-get update && apt-get install -y curl netcat-traditional postgresql-client
+        pip install -r src/retrieval_service/requirements.txt
+        
+        # Download and start the Cloud SQL Auth Proxy
+        echo "Downloading Cloud SQL Auth Proxy..."
+        curl -o cloud_sql_proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.10.0/cloud-sql-proxy.linux.amd64
+        chmod +x cloud_sql_proxy
+        ./cloud_sql_proxy -instances=${_DB_CONNECTION_NAME}=tcp:5432 &
+        PROXY_PID=$$!
+        
+        # Wait for the proxy to be ready
+        echo "Waiting for proxy to start..."
+        while ! nc -z 127.0.0.1 5432; do
+          sleep 1
+          if ! kill -0 $$PROXY_PID 2>/dev/null; then echo "Proxy has failed to start."; exit 1; fi
+        done
+        echo "Proxy started successfully."
+        
+        # FINAL FIX: Connect to the 'postgres' DB and assign ownership of our new DB to our user.
+        echo "Assigning database ownership..."
+        export PGPASSWORD=$$DB_PASS
+        psql "host=127.0.0.1 port=5432 sslmode=disable dbname=postgres user=$$DB_USER" -c "ALTER DATABASE \"$$DB_NAME\" OWNER TO \"$$DB_USER\";"
+        
+        # Run the database migrations
+        echo "Running Alembic migrations..."
+        cd src/retrieval_service
+        alembic upgrade head
+        echo "Migrations complete."
+        
+        # Stop the proxy
+        kill $$PROXY_PID
     env:
       - 'DB_USER=${_DB_USER}'
-      - 'DB_PASSWORD=${_DB_PASS}'
+      - 'DB_PASS=${_DB_PASS}'
       - 'DB_NAME=${_DB_NAME}'
-      - 'DB_INSTANCE=${_DB_INSTANCE}'
-      - 'DB_PROJECT=${_PROJECT_ID}'
-      - 'DB_REGION=${_REGION}'
     waitFor:
       - "Terraform apply"
 
+# Define image outputs
 images:
-  - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/retrieval-service:latest'
-  - 'us-central1-docker.pkg.dev/${_PROJECT_ID}/sara-repo/frontend-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-retrieval-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/sara-repo/sara-frontend-service:latest'
 
+# Define substitution variables
+substitutions:
+  _REGION: "us-central1"
+  _DB_USER: "sara-user"
+  _DB_PASS: "secure-password-placeholder"
+  _DB_NAME: "sara-db"
+  _DB_CONNECTION_NAME: ""
+
+# Specify the logging option
 options:
   logging: CLOUD_LOGGING_ONLY
- 
+   
 --- End of File: "C:\Users\just_\sara-v2\cloudbuild.yaml" --- 
  
 ================================================================= 
@@ -372,74 +387,81 @@ Processing path: "C:\Users\just_\sara-v2\database.tf"
  * limitations under the License.
  */
 
-# Handle Database
+# Handle Database Instance
 resource "google_sql_database_instance" "main" {
   count = var.database_type == "postgresql" ? 1 : 0
 
-  name             = "sara-db-instance" # <-- CORRECTED STATIC NAME
+  name             = "sara-db-instance"
   database_version = "POSTGRES_15"
   region           = var.region
-  project          = module.project-services.project_id
+  project          = var.project_id
 
+  # We create the instance with minimal settings first.
+  # The detailed settings are applied in a subsequent step.
   settings {
-    tier                        = "db-custom-1-3840" # 1 CPU, 3.75GB Memory
-    disk_autoresize             = true
-    disk_autoresize_limit       = 0
-    disk_size                   = 10
-    disk_type                   = "PD_SSD"
-    user_labels                 = var.labels
-    enable_google_ml_integration = true
-    ip_configuration {
-      ipv4_enabled = false
-      psc_config {
-        psc_enabled = true
-        allowed_consumer_projects = [
-          module.project-services.project_id
-        ]
-      }
-    }
-    database_flags {
-      name  = "cloudsql.iam_authentication"
-      value = "on"
-    }
-    database_flags {
-      name  = "cloudsql.enable_google_ml_integration"
-      value = "on"
-    }
+    tier = "db-n1-standard-1" # Start with a basic tier
   }
 
   deletion_protection = var.deletion_protection
 }
 
-# # Create Database
+# Apply the final settings in a separate step to avoid the API error
+resource "google_sql_database_instance" "main_configured" {
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  name             = google_sql_database_instance.main[0].name
+  database_version = "POSTGRES_15"
+  region           = var.region
+  project          = var.project_id
+
+  settings {
+    tier              = "db-custom-1-3840"
+    disk_autoresize   = true
+    disk_size         = 10
+    disk_type         = "PD_SSD"
+    user_labels       = var.labels
+    ip_configuration {
+      ipv4_enabled    = false
+      private_network = google_compute_network.main.id
+    }
+    database_flags {
+      name  = "cloudsql.iam_authentication"
+      value = "on"
+    }
+  }
+
+  # Ensure this happens only after the initial instance is created
+  depends_on = [google_sql_database_instance.main, google_service_networking_connection.private_service_access]
+}
+
+# Create Database
 resource "google_sql_database" "database" {
   count = var.database_type == "postgresql" ? 1 : 0
 
   project         = var.project_id
-  name            = "assistantdemo"
-  instance        = google_sql_database_instance.main[0].name
+  name            = var.db_name
+  instance        = google_sql_database_instance.main_configured[0].name
   deletion_policy = "ABANDON"
 }
 
-# # Create Cloud SQL User
+# Create Cloud SQL User
 resource "google_sql_user" "service" {
   count = var.database_type == "postgresql" ? 1 : 0
 
-  name            = "retrieval-service"
-  project         = module.project-services.project_id
-  instance        = google_sql_database_instance.main[0].name
-  type            = "BUILT_IN"
+  name            = var.db_user
+  project         = var.project_id
+  instance        = google_sql_database_instance.main_configured[0].name
   password        = random_password.cloud_sql_password.result
   deletion_policy = "ABANDON"
 }
 
-# # Create SQL integration to vertex
+# Create SQL integration to Vertex AI
 resource "google_project_iam_member" "vertex_integration" {
   count = var.database_type == "postgresql" ? 1 : 0
 
-  project = module.project-services.project_id
+  project = var.project_id
   role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_sql_database_instance.main[0].service_account_email_address}"
+  member  = "serviceAccount:${google_sql_database_instance.main_configured[0].service_account_email_address}"
 } 
 --- End of File: "C:\Users\just_\sara-v2\database.tf" --- 
  
@@ -519,7 +541,7 @@ Processing path: "C:\Users\just_\sara-v2\network.tf"
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -531,23 +553,23 @@ Processing path: "C:\Users\just_\sara-v2\network.tf"
 # Configure PSC
 # # Create VPC
 resource "google_compute_network" "main" {
-  name                    = "genai-rag-psc-${random_id.id.hex}"
+  name                    = "sara-vpc-main" # Static name for stability
   auto_create_subnetworks = false
-  project                 = module.project-services.project_id
+  project                 = var.project_id
 }
 
 # # Create Subnet
 resource "google_compute_subnetwork" "subnetwork" {
-  name          = "genai-rag-psc-subnet-${random_id.id.hex}"
+  name          = "sara-subnet-main" # Static name for stability
   ip_cidr_range = "10.2.0.0/16"
   region        = var.region
   network       = google_compute_network.main.id
-  project       = module.project-services.project_id
+  project       = var.project_id
 }
 
 # # Configure IP
 resource "google_compute_address" "default" {
-  project      = module.project-services.project_id
+  project      = var.project_id
   name         = "psc-compute-address"
   region       = var.region
   address_type = "INTERNAL"
@@ -557,7 +579,10 @@ resource "google_compute_address" "default" {
 
 # # Create VPC / PSC forwarding rule
 resource "google_compute_forwarding_rule" "default" {
-  project               = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project               = var.project_id
   name                  = "psc-forwarding-rule-${google_sql_database_instance.main[0].name}"
   region                = var.region
   network               = google_compute_network.main.id
@@ -568,7 +593,10 @@ resource "google_compute_forwarding_rule" "default" {
 
 # # Create DNS Zone for PSC
 resource "google_dns_managed_zone" "psc" {
-  project     = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project     = var.project_id
   name        = "${google_sql_database_instance.main[0].name}-${random_id.id.hex}-zone"
   dns_name    = "${google_sql_database_instance.main[0].region}.sql.goog."
   description = "Regional zone for Cloud SQL PSC instances"
@@ -582,16 +610,20 @@ resource "google_dns_managed_zone" "psc" {
 
 # # Add SQL DNS record
 resource "google_dns_record_set" "psc" {
-  project      = module.project-services.project_id
+  # FINAL FIX: Make this resource conditional
+  count = var.database_type == "postgresql" ? 1 : 0
+
+  project      = var.project_id
   name         = google_sql_database_instance.main[0].dns_name
   type         = "A"
   ttl          = 300
-  managed_zone = google_dns_managed_zone.psc.name
+  managed_zone = google_dns_managed_zone.psc[0].name
   rrdatas      = [google_compute_address.default.address]
 }
+
 resource "google_project_service" "service_networking" {
   project = var.project_id
-  service    = "servicenetworking.googleapis.com"
+  service = "servicenetworking.googleapis.com"
 }
 
 resource "google_compute_global_address" "private_ip_address" {
@@ -782,7 +814,7 @@ Processing path: "C:\Users\just_\sara-v2\secrets.tf"
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -791,16 +823,20 @@ Processing path: "C:\Users\just_\sara-v2\secrets.tf"
  * limitations under the License.
  */
 
-## Django Admin Password
+# Creates a secure, random password for the database user.
 resource "random_password" "cloud_sql_password" {
-  length           = 16
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
+  length  = 16
+  special = true
 }
 
+# Creates a secret in Google Secret Manager to store the password.
 resource "google_secret_manager_secret" "cloud_sql_password" {
   project   = module.project-services.project_id
-  secret_id = "genai-cloud-sql-password-${random_id.id.hex}"
+  secret_id = "sara-cloud-sql-password-${random_id.id.hex}"
+
+  # FINAL, DEFINITIVE FIX: This restores the correct user_managed replication
+  # block, ensuring the secret is created in the same region as the app.
+  # This syntax is required by your specific provider versions.
   replication {
     user_managed {
       replicas {
@@ -809,23 +845,15 @@ resource "google_secret_manager_secret" "cloud_sql_password" {
     }
   }
 
-  labels = var.labels
-
+  labels     = var.labels
   depends_on = [module.project-services]
 }
 
-resource "google_secret_manager_secret_iam_binding" "cloud_sql_password" {
-  project   = module.project-services.project_id
-  secret_id = google_secret_manager_secret.cloud_sql_password.id
-  role      = "roles/secretmanager.secretAccessor"
-  members   = ["serviceAccount:${google_service_account.runsa.email}"]
-}
-
+# Creates a new version of the secret with the generated password.
 resource "google_secret_manager_secret_version" "cloud_sql_password" {
   secret      = google_secret_manager_secret.cloud_sql_password.id
   secret_data = random_password.cloud_sql_password.result
-}
- 
+} 
 --- End of File: "C:\Users\just_\sara-v2\secrets.tf" --- 
  
 ================================================================= 
@@ -843,10 +871,14 @@ Processing path: "C:\Users\just_\sara-v2\storage.tf"
 --- File: "C:\Users\just_\sara-v2\storage.tf" --- 
 # Filename: storage.tf
 
-# This tells Terraform to get data about an EXISTING bucket
-# instead of trying to create a new one.
-data "google_storage_bucket" "sara_vault" {
-  name = "${var.project_id}-sara-documents-vault"
+# This now correctly defines the application's data vault as a
+# resource that Terraform will create and manage. This is separate
+# from the Terraform state bucket.
+resource "google_storage_bucket" "sara_vault" {
+  name          = "${var.project_id}-sara-documents-vault"
+  location      = var.region
+  force_destroy = true # Set to true for easier cleanup in non-production environments
+  uniform_bucket_level_access = true
 } 
 --- End of File: "C:\Users\just_\sara-v2\storage.tf" --- 
  
@@ -854,1572 +886,13 @@ data "google_storage_bucket" "sara_vault" {
 Processing path: "C:\Users\just_\sara-v2\terraform.tfstate" 
 ================================================================= 
  
-"C:\Users\just_\sara-v2\terraform.tfstate" is a file. Printing its content... 
- 
---- File: "C:\Users\just_\sara-v2\terraform.tfstate" --- 
- 
---- End of File: "C:\Users\just_\sara-v2\terraform.tfstate" --- 
+WARNING: "C:\Users\just_\sara-v2\terraform.tfstate" is not a valid file or directory. Skipping. 
  
 ================================================================= 
 Processing path: "C:\Users\just_\sara-v2\terraform.tfstate.backup" 
 ================================================================= 
  
-"C:\Users\just_\sara-v2\terraform.tfstate.backup" is a file. Printing its content... 
- 
---- File: "C:\Users\just_\sara-v2\terraform.tfstate.backup" --- 
-{
-  "version": 4,
-  "terraform_version": "1.12.2",
-  "serial": 74,
-  "lineage": "f4bb6a13-4dbe-2690-883b-593ae4af1789",
-  "outputs": {
-    "deployment_ip_address": {
-      "value": null,
-      "type": "string"
-    }
-  },
-  "resources": [
-    {
-      "mode": "managed",
-      "type": "google_cloud_run_v2_service",
-      "name": "retrieval_service",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "status": "tainted",
-          "schema_version": 0,
-          "attributes": {
-            "annotations": null,
-            "binary_authorization": [],
-            "build_config": [],
-            "client": null,
-            "client_version": null,
-            "conditions": null,
-            "create_time": null,
-            "creator": null,
-            "custom_audiences": null,
-            "delete_time": null,
-            "deletion_protection": false,
-            "description": null,
-            "effective_annotations": null,
-            "effective_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "etag": null,
-            "expire_time": null,
-            "generation": null,
-            "id": "projects/sara-1-2/locations/us-central1/services/retrieval-service",
-            "ingress": null,
-            "invoker_iam_disabled": null,
-            "labels": null,
-            "last_modifier": null,
-            "latest_created_revision": null,
-            "latest_ready_revision": null,
-            "launch_stage": null,
-            "location": "us-central1",
-            "name": "retrieval-service",
-            "observed_generation": null,
-            "project": "sara-1-2",
-            "reconciling": null,
-            "scaling": [],
-            "template": [
-              {
-                "annotations": null,
-                "containers": [
-                  {
-                    "args": null,
-                    "base_image_uri": "",
-                    "build_info": [],
-                    "command": null,
-                    "depends_on": null,
-                    "env": [
-                      {
-                        "name": "DB_PASSWORD",
-                        "value": "",
-                        "value_source": [
-                          {
-                            "secret_key_ref": [
-                              {
-                                "secret": "genai-cloud-sql-password-56b40394",
-                                "version": "latest"
-                              }
-                            ]
-                          }
-                        ]
-                      },
-                      {
-                        "name": "DB_USER",
-                        "value": "retrieval-service",
-                        "value_source": []
-                      },
-                      {
-                        "name": "GCS_BUCKET_NAME",
-                        "value": "sara-1-2-sara-documents-vault",
-                        "value_source": []
-                      }
-                    ],
-                    "image": "us-central1-docker.pkg.dev/sara-1-2/sara-repo/retrieval-service:latest",
-                    "liveness_probe": [],
-                    "name": "",
-                    "ports": [],
-                    "resources": [],
-                    "startup_probe": [],
-                    "volume_mounts": [],
-                    "working_dir": ""
-                  }
-                ],
-                "encryption_key": "",
-                "execution_environment": "",
-                "gpu_zonal_redundancy_disabled": false,
-                "labels": {
-                  "genai-rag": "true"
-                },
-                "max_instance_request_concurrency": 0,
-                "node_selector": [],
-                "revision": "",
-                "scaling": [],
-                "service_account": "sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-                "session_affinity": false,
-                "timeout": "",
-                "volumes": [],
-                "vpc_access": [
-                  {
-                    "connector": "",
-                    "egress": "PRIVATE_RANGES_ONLY",
-                    "network_interfaces": [
-                      {
-                        "network": "projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-                        "subnetwork": "projects/sara-1-2/regions/us-central1/subnetworks/genai-rag-psc-subnet-56b40394",
-                        "tags": [
-                          "direct-vpc-egress"
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ],
-            "terminal_condition": null,
-            "terraform_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "timeouts": null,
-            "traffic": null,
-            "traffic_statuses": null,
-            "uid": null,
-            "update_time": null,
-            "uri": null,
-            "urls": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_network.main",
-            "google_compute_subnetwork.subnetwork",
-            "google_project_iam_member.allrun",
-            "google_secret_manager_secret.cloud_sql_password",
-            "google_service_account.runsa",
-            "google_sql_database_instance.main",
-            "google_sql_user.service",
-            "google_storage_bucket.sara_vault",
-            "module.project-services.data.google_compute_default_service_account.default",
-            "module.project-services.google_project_iam_member.project_service_identity_roles",
-            "module.project-services.google_project_service.project_services",
-            "module.project-services.google_project_service_identity.project_service_identities",
-            "random_id.id",
-            "random_password.cloud_sql_password"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_compute_address",
-      "name": "default",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "address": "10.2.0.42",
-            "address_type": "INTERNAL",
-            "creation_timestamp": "2025-07-26T07:07:19.268-07:00",
-            "description": "",
-            "effective_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "id": "projects/sara-1-2/regions/us-central1/addresses/psc-compute-address",
-            "ip_version": "",
-            "ipv6_endpoint_type": "",
-            "label_fingerprint": "vezUS-42LLM=",
-            "labels": {},
-            "name": "psc-compute-address",
-            "network": "",
-            "network_tier": "PREMIUM",
-            "prefix_length": 0,
-            "project": "sara-1-2",
-            "purpose": "GCE_ENDPOINT",
-            "region": "us-central1",
-            "self_link": "https://www.googleapis.com/compute/v1/projects/sara-1-2/regions/us-central1/addresses/psc-compute-address",
-            "subnetwork": "https://www.googleapis.com/compute/v1/projects/sara-1-2/regions/us-central1/subnetworks/genai-rag-psc-subnet-56b40394",
-            "terraform_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "timeouts": null,
-            "users": [
-              "https://www.googleapis.com/compute/v1/projects/sara-1-2/regions/us-central1/forwardingRules/psc-forwarding-rule-sara-db-instance"
-            ]
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_network.main",
-            "google_compute_subnetwork.subnetwork",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_compute_forwarding_rule",
-      "name": "default",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "all_ports": false,
-            "allow_global_access": false,
-            "allow_psc_global_access": false,
-            "backend_service": "",
-            "base_forwarding_rule": "",
-            "creation_timestamp": "2025-07-26T07:07:30.588-07:00",
-            "description": "",
-            "effective_labels": {},
-            "forwarding_rule_id": 780512620073017293,
-            "id": "projects/sara-1-2/regions/us-central1/forwardingRules/psc-forwarding-rule-sara-db-instance",
-            "ip_address": "10.2.0.42",
-            "ip_collection": "",
-            "ip_protocol": "",
-            "ip_version": "",
-            "is_mirroring_collector": false,
-            "label_fingerprint": "42WmSpB8rSM=",
-            "labels": {},
-            "load_balancing_scheme": "",
-            "name": "psc-forwarding-rule-sara-db-instance",
-            "network": "https://www.googleapis.com/compute/v1/projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-            "network_tier": "PREMIUM",
-            "no_automate_dns_zone": null,
-            "port_range": "",
-            "ports": [],
-            "project": "sara-1-2",
-            "psc_connection_id": "118312472133369898",
-            "psc_connection_status": "ACCEPTED",
-            "recreate_closed_psc": false,
-            "region": "us-central1",
-            "self_link": "https://www.googleapis.com/compute/v1/projects/sara-1-2/regions/us-central1/forwardingRules/psc-forwarding-rule-sara-db-instance",
-            "service_directory_registrations": [
-              {
-                "namespace": "goog-psc-default",
-                "service": ""
-              }
-            ],
-            "service_label": "",
-            "service_name": "",
-            "source_ip_ranges": [],
-            "subnetwork": "",
-            "target": "https://www.googleapis.com/compute/v1/projects/r580d4231132442a7p-tp/regions/us-central1/serviceAttachments/a-9330e10f04f7-psc-service-attachment-9ab8f0090a496dba",
-            "terraform_labels": {},
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_address.default",
-            "google_compute_network.main",
-            "google_compute_subnetwork.subnetwork",
-            "google_sql_database_instance.main",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_compute_global_address",
-      "name": "private_ip_address",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "address": "10.152.0.0",
-            "address_type": "INTERNAL",
-            "creation_timestamp": "2025-07-26T07:07:18.856-07:00",
-            "description": "",
-            "effective_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "id": "projects/sara-1-2/global/addresses/private-ip-for-google-services",
-            "ip_version": "",
-            "label_fingerprint": "vezUS-42LLM=",
-            "labels": {},
-            "name": "private-ip-for-google-services",
-            "network": "https://www.googleapis.com/compute/v1/projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-            "prefix_length": 16,
-            "project": "sara-1-2",
-            "purpose": "VPC_PEERING",
-            "self_link": "https://www.googleapis.com/compute/v1/projects/sara-1-2/global/addresses/private-ip-for-google-services",
-            "terraform_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_network.main",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_compute_network",
-      "name": "main",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "auto_create_subnetworks": false,
-            "bgp_always_compare_med": false,
-            "bgp_best_path_selection_mode": "LEGACY",
-            "bgp_inter_region_cost": "",
-            "delete_default_routes_on_create": false,
-            "description": "",
-            "enable_ula_internal_ipv6": false,
-            "gateway_ipv4": "",
-            "id": "projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-            "internal_ipv6_range": "",
-            "mtu": 0,
-            "name": "genai-rag-psc-56b40394",
-            "network_firewall_policy_enforcement_order": "AFTER_CLASSIC_FIREWALL",
-            "network_id": "778927553802493998",
-            "network_profile": "",
-            "numeric_id": "778927553802493998",
-            "params": [],
-            "project": "sara-1-2",
-            "routing_mode": "REGIONAL",
-            "self_link": "https://www.googleapis.com/compute/v1/projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_compute_subnetwork",
-      "name": "subnetwork",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "creation_timestamp": "2025-07-26T06:57:43.711-07:00",
-            "description": "",
-            "enable_flow_logs": false,
-            "external_ipv6_prefix": "",
-            "fingerprint": null,
-            "gateway_address": "10.2.0.1",
-            "id": "projects/sara-1-2/regions/us-central1/subnetworks/genai-rag-psc-subnet-56b40394",
-            "internal_ipv6_prefix": "",
-            "ip_cidr_range": "10.2.0.0/16",
-            "ip_collection": null,
-            "ipv6_access_type": "",
-            "ipv6_cidr_range": "",
-            "ipv6_gce_endpoint": "",
-            "log_config": [],
-            "name": "genai-rag-psc-subnet-56b40394",
-            "network": "https://www.googleapis.com/compute/v1/projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-            "params": [],
-            "private_ip_google_access": false,
-            "private_ipv6_google_access": "DISABLE_GOOGLE_ACCESS",
-            "project": "sara-1-2",
-            "purpose": "PRIVATE",
-            "region": "us-central1",
-            "reserved_internal_range": "",
-            "role": "",
-            "secondary_ip_range": [],
-            "self_link": "https://www.googleapis.com/compute/v1/projects/sara-1-2/regions/us-central1/subnetworks/genai-rag-psc-subnet-56b40394",
-            "send_secondary_ip_range_if_empty": null,
-            "stack_type": "IPV4_ONLY",
-            "state": "",
-            "subnetwork_id": 1676350293012996152,
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_network.main",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_dns_managed_zone",
-      "name": "psc",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "cloud_logging_config": [
-              {
-                "enable_logging": false
-              }
-            ],
-            "creation_time": "2025-07-26T13:57:43.418Z",
-            "description": "Regional zone for Cloud SQL PSC instances",
-            "dns_name": "us-central1.sql.goog.",
-            "dnssec_config": [],
-            "effective_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "force_destroy": false,
-            "forwarding_config": [],
-            "id": "projects/sara-1-2/managedZones/sara-db-instance-56b40394-zone",
-            "labels": {},
-            "managed_zone_id": 7937617158668287301,
-            "name": "sara-db-instance-56b40394-zone",
-            "name_servers": [
-              "ns-gcp-private.googledomains.com."
-            ],
-            "peering_config": [],
-            "private_visibility_config": [
-              {
-                "gke_clusters": [],
-                "networks": [
-                  {
-                    "network_url": "https://www.googleapis.com/compute/v1/projects/sara-1-2/global/networks/genai-rag-psc-56b40394"
-                  }
-                ]
-              }
-            ],
-            "project": "sara-1-2",
-            "terraform_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "timeouts": null,
-            "visibility": "private"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_network.main",
-            "google_sql_database_instance.main",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_dns_record_set",
-      "name": "psc",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "id": "projects/sara-1-2/managedZones/sara-db-instance-56b40394-zone/rrsets/9330e10f04f7.sjrrqq0b526i.us-central1.sql.goog./A",
-            "managed_zone": "sara-db-instance-56b40394-zone",
-            "name": "9330e10f04f7.sjrrqq0b526i.us-central1.sql.goog.",
-            "project": "sara-1-2",
-            "routing_policy": [],
-            "rrdatas": [
-              "10.2.0.42"
-            ],
-            "ttl": 300,
-            "type": "A"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_compute_address.default",
-            "google_compute_network.main",
-            "google_compute_subnetwork.subnetwork",
-            "google_dns_managed_zone.psc",
-            "google_sql_database_instance.main",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_project_iam_member",
-      "name": "allrun",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "index_key": "roles/aiplatform.user",
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/aiplatform.user/serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/aiplatform.user"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_service_account.runsa",
-            "module.project-services.google_project_service.project_services"
-          ]
-        },
-        {
-          "index_key": "roles/cloudsql.client",
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/cloudsql.client/serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/cloudsql.client"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_service_account.runsa",
-            "module.project-services.google_project_service.project_services"
-          ]
-        },
-        {
-          "index_key": "roles/iam.serviceAccountTokenCreator",
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/iam.serviceAccountTokenCreator/serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/iam.serviceAccountTokenCreator"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_service_account.runsa",
-            "module.project-services.google_project_service.project_services"
-          ]
-        },
-        {
-          "index_key": "roles/run.invoker",
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/run.invoker/serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/run.invoker"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_service_account.runsa",
-            "module.project-services.google_project_service.project_services"
-          ]
-        },
-        {
-          "index_key": "roles/secretmanager.secretAccessor",
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/secretmanager.secretAccessor/serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/secretmanager.secretAccessor"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_service_account.runsa",
-            "module.project-services.google_project_service.project_services"
-          ]
-        },
-        {
-          "index_key": "roles/storage.objectAdmin",
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/storage.objectAdmin/serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/storage.objectAdmin"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_service_account.runsa",
-            "module.project-services.google_project_service.project_services"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_project_iam_member",
-      "name": "vertex_integration",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "index_key": 0,
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY66ev4goU=",
-            "id": "sara-1-2/roles/aiplatform.user/serviceAccount:p867202853045-bmprbl@gcp-sa-cloud-sql.iam.gserviceaccount.com",
-            "member": "serviceAccount:p867202853045-bmprbl@gcp-sa-cloud-sql.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "role": "roles/aiplatform.user"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_sql_database_instance.main",
-            "module.project-services.google_project_service.project_services"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_project_service",
-      "name": "service_networking",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": null,
-            "disable_on_destroy": true,
-            "id": "sara-1-2/servicenetworking.googleapis.com",
-            "project": "sara-1-2",
-            "service": "servicenetworking.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_secret_manager_secret",
-      "name": "cloud_sql_password",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "annotations": {},
-            "create_time": "2025-07-26T13:57:21.592069Z",
-            "deletion_protection": false,
-            "effective_annotations": {},
-            "effective_labels": {
-              "genai-rag": "true",
-              "goog-terraform-provisioned": "true"
-            },
-            "expire_time": "",
-            "id": "projects/sara-1-2/secrets/genai-cloud-sql-password-56b40394",
-            "labels": {
-              "genai-rag": "true"
-            },
-            "name": "projects/867202853045/secrets/genai-cloud-sql-password-56b40394",
-            "project": "sara-1-2",
-            "replication": [
-              {
-                "auto": [],
-                "user_managed": [
-                  {
-                    "replicas": [
-                      {
-                        "customer_managed_encryption": [],
-                        "location": "us-central1"
-                      }
-                    ]
-                  }
-                ]
-              }
-            ],
-            "rotation": [],
-            "secret_id": "genai-cloud-sql-password-56b40394",
-            "tags": null,
-            "terraform_labels": {
-              "genai-rag": "true",
-              "goog-terraform-provisioned": "true"
-            },
-            "timeouts": null,
-            "topics": [],
-            "ttl": null,
-            "version_aliases": {},
-            "version_destroy_ttl": ""
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "module.project-services.data.google_compute_default_service_account.default",
-            "module.project-services.google_project_iam_member.project_service_identity_roles",
-            "module.project-services.google_project_service.project_services",
-            "module.project-services.google_project_service_identity.project_service_identities",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_secret_manager_secret_iam_binding",
-      "name": "cloud_sql_password",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "condition": [],
-            "etag": "BwY61ZQjt5g=",
-            "id": "projects/sara-1-2/secrets/genai-cloud-sql-password-56b40394/roles/secretmanager.secretAccessor",
-            "members": [
-              "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com"
-            ],
-            "project": "sara-1-2",
-            "role": "roles/secretmanager.secretAccessor",
-            "secret_id": "projects/sara-1-2/secrets/genai-cloud-sql-password-56b40394"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "bnVsbA==",
-          "dependencies": [
-            "google_secret_manager_secret.cloud_sql_password",
-            "google_service_account.runsa",
-            "module.project-services.data.google_compute_default_service_account.default",
-            "module.project-services.google_project_iam_member.project_service_identity_roles",
-            "module.project-services.google_project_service.project_services",
-            "module.project-services.google_project_service_identity.project_service_identities",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_secret_manager_secret_version",
-      "name": "cloud_sql_password",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "create_time": "2025-07-26T13:57:22.396434Z",
-            "deletion_policy": "DELETE",
-            "destroy_time": "",
-            "enabled": true,
-            "id": "projects/867202853045/secrets/genai-cloud-sql-password-56b40394/versions/1",
-            "is_secret_data_base64": false,
-            "name": "projects/867202853045/secrets/genai-cloud-sql-password-56b40394/versions/1",
-            "secret": "projects/sara-1-2/secrets/genai-cloud-sql-password-56b40394",
-            "secret_data": "j6$+9*)TSyt}380-",
-            "secret_data_wo": null,
-            "secret_data_wo_version": 0,
-            "timeouts": null,
-            "version": "1"
-          },
-          "sensitive_attributes": [
-            [
-              {
-                "type": "get_attr",
-                "value": "secret_data"
-              }
-            ]
-          ],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_secret_manager_secret.cloud_sql_password",
-            "module.project-services.data.google_compute_default_service_account.default",
-            "module.project-services.google_project_iam_member.project_service_identity_roles",
-            "module.project-services.google_project_service.project_services",
-            "module.project-services.google_project_service_identity.project_service_identities",
-            "random_id.id",
-            "random_password.cloud_sql_password"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_service_account",
-      "name": "runsa",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "account_id": "sara-run-sa",
-            "create_ignore_already_exists": null,
-            "description": "",
-            "disabled": false,
-            "display_name": "SARA Cloud Run Service Account",
-            "email": "sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "id": "projects/sara-1-2/serviceAccounts/sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "member": "serviceAccount:sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "name": "projects/sara-1-2/serviceAccounts/sara-run-sa@sara-1-2.iam.gserviceaccount.com",
-            "project": "sara-1-2",
-            "timeouts": null,
-            "unique_id": "117748822774694466056"
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjozMDAwMDAwMDAwMDB9fQ==",
-          "dependencies": [
-            "module.project-services.google_project_service.project_services"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_service_networking_connection",
-      "name": "private_service_access",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "deletion_policy": null,
-            "id": "projects%2Fsara-1-2%2Fglobal%2Fnetworks%2Fgenai-rag-psc-56b40394:servicenetworking.googleapis.com",
-            "network": "projects/sara-1-2/global/networks/genai-rag-psc-56b40394",
-            "peering": "servicenetworking-googleapis-com",
-            "reserved_peering_ranges": [
-              "private-ip-for-google-services"
-            ],
-            "service": "servicenetworking.googleapis.com",
-            "timeouts": null,
-            "update_on_creation_fail": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjo2MDAwMDAwMDAwMDAsImRlbGV0ZSI6NjAwMDAwMDAwMDAwLCJ1cGRhdGUiOjYwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_compute_global_address.private_ip_address",
-            "google_compute_network.main",
-            "google_project_service.service_networking",
-            "module.project-services.google_project_service.project_services",
-            "random_id.id"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_sql_database",
-      "name": "database",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "index_key": 0,
-          "schema_version": 0,
-          "attributes": {
-            "charset": "UTF8",
-            "collation": "en_US.UTF8",
-            "deletion_policy": "ABANDON",
-            "id": "projects/sara-1-2/instances/sara-db-instance/databases/assistantdemo",
-            "instance": "sara-db-instance",
-            "name": "assistantdemo",
-            "project": "sara-1-2",
-            "self_link": "https://sqladmin.googleapis.com/sql/v1beta4/projects/sara-1-2/instances/sara-db-instance/databases/assistantdemo",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInVwZGF0ZSI6MTIwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "google_sql_database_instance.main",
-            "module.project-services.google_project_service.project_services"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_sql_database_instance",
-      "name": "main",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "index_key": 0,
-          "schema_version": 0,
-          "attributes": {
-            "available_maintenance_versions": [],
-            "clone": [],
-            "connection_name": "sara-1-2:us-central1:sara-db-instance",
-            "database_version": "POSTGRES_15",
-            "deletion_protection": false,
-            "dns_name": "9330e10f04f7.sjrrqq0b526i.us-central1.sql.goog.",
-            "dns_names": [
-              {
-                "connection_type": "PRIVATE_SERVICE_CONNECT",
-                "dns_scope": "INSTANCE",
-                "name": "9330e10f04f7.sjrrqq0b526i.us-central1.sql.goog."
-              }
-            ],
-            "encryption_key_name": null,
-            "first_ip_address": null,
-            "id": "sara-db-instance",
-            "instance_type": "CLOUD_SQL_INSTANCE",
-            "ip_address": [],
-            "maintenance_version": "POSTGRES_15_13.R20250302.00_31",
-            "master_instance_name": "",
-            "name": "sara-db-instance",
-            "private_ip_address": "",
-            "project": "sara-1-2",
-            "psc_service_attachment_link": "projects/r580d4231132442a7p-tp/regions/us-central1/serviceAttachments/a-9330e10f04f7-psc-service-attachment-9ab8f0090a496dba",
-            "public_ip_address": "",
-            "region": "us-central1",
-            "replica_configuration": [],
-            "replica_names": [],
-            "replication_cluster": [
-              {
-                "dr_replica": false,
-                "failover_dr_replica_name": ""
-              }
-            ],
-            "restore_backup_context": [],
-            "root_password": null,
-            "self_link": "https://sqladmin.googleapis.com/sql/v1beta4/projects/sara-1-2/instances/sara-db-instance",
-            "server_ca_cert": [
-              {
-                "cert": "-----BEGIN CERTIFICATE-----\nMIIDfzCCAmegAwIBAgIBADANBgkqhkiG9w0BAQsFADB3MS0wKwYDVQQuEyQwNWRm\nYzExOS0zNjdiLTRmMDEtYjY3Zi0wYmFiOTJjNzc4MmExIzAhBgNVBAMTGkdvb2ds\nZSBDbG91ZCBTUUwgU2VydmVyIENBMRQwEgYDVQQKEwtHb29nbGUsIEluYzELMAkG\nA1UEBhMCVVMwHhcNMjUwNzI2MTMxNjU3WhcNMzUwNzI0MTMxNzU3WjB3MS0wKwYD\nVQQuEyQwNWRmYzExOS0zNjdiLTRmMDEtYjY3Zi0wYmFiOTJjNzc4MmExIzAhBgNV\nBAMTGkdvb2dsZSBDbG91ZCBTUUwgU2VydmVyIENBMRQwEgYDVQQKEwtHb29nbGUs\nIEluYzELMAkGA1UEBhMCVVMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB\nAQC8v5/B+ZC/OQltteR7UtGmpnafofZfdso66pqRnHmFQcAbOaVsfbKNRvJB4WRR\nIjCo+26cYKf60zRvccH76j39heCg2MJn0Hgqm/kdFeleBavZTeByy2P/3BPRC4UV\napqSXppfsmYaSY1kUhJ0ytIF+pSAOQovkzYfFLdm2Nn4Tp9CIh1/TRvhhbyLNOwU\nJmmXzS90ktPYyZ7MEIA7YLoPBuzzj2oQDnt3xZKp1bLm2h1RWCUsa/5vukiPscbI\nyLJUi2AijkSdB8KL5smEvJ9daSOM2WetmkRB68sGC6RaAFbcDKtEYfuuZ3LhlAw7\nOL07cKtetZh020ZVa3xa5QY3AgMBAAGjFjAUMBIGA1UdEwEB/wQIMAYBAf8CAQAw\nDQYJKoZIhvcNAQELBQADggEBAKzy2ISMwQBGkmLL03/YBt5vOHOjLFeaduGlxNir\nflRZAevIDEYXE8zX+szeECeQbIMvPhAkwsEndnWHjN6tLSPrTum6K8pqdK0bkQGD\nPR/W8UIVUrsoZvu4O/0nlfGXTccAkItD+cg9LHPOpYlFwKkCg2gIh0c+Rz7RthSc\npylWawLdQgA4SB07hIXmM7sUeCNn49DtkXJB0L/78wli711SVVxewFJpgcuau+G/\nNWCrbyKxNLDiuOElo2dgbDTRHDgYACEn8yuhDRGEbMdgue+17+Fng5S4ACj19SVq\nQj1qPZ/zK877CiaWfhrvIjVFhXppcxpIULPjk36xjbZqN2c=\n-----END CERTIFICATE-----",
-                "common_name": "C=US,O=Google\\, Inc,CN=Google Cloud SQL Server CA,dnQualifier=05dfc119-367b-4f01-b67f-0bab92c7782a",
-                "create_time": "2025-07-26T13:16:57.346Z",
-                "expiration_time": "2035-07-24T13:17:57.346Z",
-                "sha1_fingerprint": "c7479333fa83bd0f6c838805a17de5c85ce7a487"
-              }
-            ],
-            "service_account_email_address": "p867202853045-bmprbl@gcp-sa-cloud-sql.iam.gserviceaccount.com",
-            "settings": [
-              {
-                "activation_policy": "ALWAYS",
-                "active_directory_config": [],
-                "advanced_machine_features": [],
-                "availability_type": "ZONAL",
-                "backup_configuration": [
-                  {
-                    "backup_retention_settings": [
-                      {
-                        "retained_backups": 7,
-                        "retention_unit": "COUNT"
-                      }
-                    ],
-                    "binary_log_enabled": false,
-                    "enabled": false,
-                    "location": "",
-                    "point_in_time_recovery_enabled": false,
-                    "start_time": "06:00",
-                    "transaction_log_retention_days": 7
-                  }
-                ],
-                "collation": "",
-                "connection_pool_config": [],
-                "connector_enforcement": "NOT_REQUIRED",
-                "data_cache_config": [
-                  {
-                    "data_cache_enabled": false
-                  }
-                ],
-                "database_flags": [
-                  {
-                    "name": "cloudsql.enable_google_ml_integration",
-                    "value": "on"
-                  },
-                  {
-                    "name": "cloudsql.iam_authentication",
-                    "value": "on"
-                  }
-                ],
-                "deletion_protection_enabled": false,
-                "deny_maintenance_period": [],
-                "disk_autoresize": true,
-                "disk_autoresize_limit": 0,
-                "disk_size": 10,
-                "disk_type": "PD_SSD",
-                "edition": "ENTERPRISE",
-                "enable_dataplex_integration": false,
-                "enable_google_ml_integration": true,
-                "insights_config": [],
-                "ip_configuration": [
-                  {
-                    "allocated_ip_range": "",
-                    "authorized_networks": [],
-                    "custom_subject_alternative_names": [],
-                    "enable_private_path_for_google_cloud_services": false,
-                    "ipv4_enabled": false,
-                    "private_network": "",
-                    "psc_config": [
-                      {
-                        "allowed_consumer_projects": [
-                          "sara-1-2"
-                        ],
-                        "psc_auto_connections": [],
-                        "psc_enabled": true
-                      }
-                    ],
-                    "server_ca_mode": "GOOGLE_MANAGED_INTERNAL_CA",
-                    "server_ca_pool": "",
-                    "ssl_mode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
-                  }
-                ],
-                "location_preference": [
-                  {
-                    "follow_gae_application": "",
-                    "secondary_zone": "",
-                    "zone": "us-central1-c"
-                  }
-                ],
-                "maintenance_window": [],
-                "password_validation_policy": [],
-                "pricing_plan": "PER_USE",
-                "retain_backups_on_delete": false,
-                "sql_server_audit_config": [],
-                "tier": "db-custom-1-3840",
-                "time_zone": "",
-                "user_labels": {
-                  "genai-rag": "true"
-                },
-                "version": 4
-              }
-            ],
-            "timeouts": null
-          },
-          "sensitive_attributes": [
-            [
-              {
-                "type": "get_attr",
-                "value": "root_password"
-              }
-            ],
-            [
-              {
-                "type": "get_attr",
-                "value": "server_ca_cert"
-              }
-            ]
-          ],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjo1NDAwMDAwMDAwMDAwLCJkZWxldGUiOjU0MDAwMDAwMDAwMDAsInVwZGF0ZSI6NTQwMDAwMDAwMDAwMH19",
-          "dependencies": [
-            "module.project-services.google_project_service.project_services"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_sql_user",
-      "name": "service",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "index_key": 0,
-          "schema_version": 1,
-          "attributes": {
-            "deletion_policy": "ABANDON",
-            "host": "",
-            "id": "retrieval-service//sara-db-instance",
-            "instance": "sara-db-instance",
-            "name": "retrieval-service",
-            "password": "j6$+9*)TSyt}380-",
-            "password_policy": [],
-            "password_wo": null,
-            "password_wo_version": null,
-            "project": "sara-1-2",
-            "sql_server_user_details": [],
-            "timeouts": null,
-            "type": ""
-          },
-          "sensitive_attributes": [
-            [
-              {
-                "type": "get_attr",
-                "value": "password"
-              }
-            ]
-          ],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjo2MDAwMDAwMDAwMDAsImRlbGV0ZSI6NjAwMDAwMDAwMDAwLCJ1cGRhdGUiOjYwMDAwMDAwMDAwMH0sInNjaGVtYV92ZXJzaW9uIjoiMSJ9",
-          "dependencies": [
-            "google_sql_database_instance.main",
-            "module.project-services.google_project_service.project_services",
-            "random_password.cloud_sql_password"
-          ]
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "google_storage_bucket",
-      "name": "sara_vault",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "schema_version": 3,
-          "attributes": {
-            "autoclass": [],
-            "cors": [],
-            "custom_placement_config": [],
-            "default_event_based_hold": false,
-            "effective_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "enable_object_retention": false,
-            "encryption": [],
-            "force_destroy": false,
-            "hierarchical_namespace": [
-              {
-                "enabled": false
-              }
-            ],
-            "id": "sara-1-2-sara-documents-vault",
-            "ip_filter": [],
-            "labels": {},
-            "lifecycle_rule": [
-              {
-                "action": [
-                  {
-                    "storage_class": "",
-                    "type": "AbortIncompleteMultipartUpload"
-                  }
-                ],
-                "condition": [
-                  {
-                    "age": 1,
-                    "created_before": "",
-                    "custom_time_before": "",
-                    "days_since_custom_time": 0,
-                    "days_since_noncurrent_time": 0,
-                    "matches_prefix": [],
-                    "matches_storage_class": [],
-                    "matches_suffix": [],
-                    "noncurrent_time_before": "",
-                    "num_newer_versions": 0,
-                    "send_age_if_zero": false,
-                    "send_days_since_custom_time_if_zero": false,
-                    "send_days_since_noncurrent_time_if_zero": false,
-                    "send_num_newer_versions_if_zero": false,
-                    "with_state": "ANY"
-                  }
-                ]
-              }
-            ],
-            "location": "US-CENTRAL1",
-            "logging": [],
-            "name": "sara-1-2-sara-documents-vault",
-            "project": "sara-1-2",
-            "project_number": 867202853045,
-            "public_access_prevention": "inherited",
-            "requester_pays": false,
-            "retention_policy": [],
-            "rpo": null,
-            "self_link": "https://www.googleapis.com/storage/v1/b/sara-1-2-sara-documents-vault",
-            "soft_delete_policy": [
-              {
-                "effective_time": "2025-07-26T14:07:07.488Z",
-                "retention_duration_seconds": 604800
-              }
-            ],
-            "storage_class": "STANDARD",
-            "terraform_labels": {
-              "goog-terraform-provisioned": "true"
-            },
-            "time_created": "2025-07-26T14:07:07.488Z",
-            "timeouts": null,
-            "uniform_bucket_level_access": true,
-            "updated": "2025-07-26T14:07:07.488Z",
-            "url": "gs://sara-1-2-sara-documents-vault",
-            "versioning": [],
-            "website": []
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjo2MDAwMDAwMDAwMDAsInJlYWQiOjI0MDAwMDAwMDAwMCwidXBkYXRlIjoyNDAwMDAwMDAwMDB9LCJzY2hlbWFfdmVyc2lvbiI6IjMifQ=="
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "random_id",
-      "name": "id",
-      "provider": "provider[\"registry.terraform.io/hashicorp/random\"]",
-      "instances": [
-        {
-          "schema_version": 0,
-          "attributes": {
-            "b64_std": "VrQDlA==",
-            "b64_url": "VrQDlA",
-            "byte_length": 4,
-            "dec": "1454637972",
-            "hex": "56b40394",
-            "id": "VrQDlA",
-            "keepers": null,
-            "prefix": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0
-        }
-      ]
-    },
-    {
-      "mode": "managed",
-      "type": "random_password",
-      "name": "cloud_sql_password",
-      "provider": "provider[\"registry.terraform.io/hashicorp/random\"]",
-      "instances": [
-        {
-          "schema_version": 3,
-          "attributes": {
-            "bcrypt_hash": "$2a$10$DXYF8leFpZSH1pJ/1hnoZubUOsZx0HLcn/uftxeJ7TtBczdMDe5uG",
-            "id": "none",
-            "keepers": null,
-            "length": 16,
-            "lower": true,
-            "min_lower": 0,
-            "min_numeric": 0,
-            "min_special": 0,
-            "min_upper": 0,
-            "number": true,
-            "numeric": true,
-            "override_special": "!#$%\u0026*()-_=+[]{}\u003c\u003e:?",
-            "result": "j6$+9*)TSyt}380-",
-            "special": true,
-            "upper": true
-          },
-          "sensitive_attributes": [
-            [
-              {
-                "type": "get_attr",
-                "value": "bcrypt_hash"
-              }
-            ],
-            [
-              {
-                "type": "get_attr",
-                "value": "result"
-              }
-            ]
-          ],
-          "identity_schema_version": 0
-        }
-      ]
-    },
-    {
-      "module": "module.project-services",
-      "mode": "data",
-      "type": "google_compute_default_service_account",
-      "name": "default",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": []
-    },
-    {
-      "module": "module.project-services",
-      "mode": "managed",
-      "type": "google_project_iam_member",
-      "name": "project_service_identity_roles",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": []
-    },
-    {
-      "module": "module.project-services",
-      "mode": "managed",
-      "type": "google_project_service",
-      "name": "project_services",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
-      "instances": [
-        {
-          "index_key": "aiplatform.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/aiplatform.googleapis.com",
-            "project": "sara-1-2",
-            "service": "aiplatform.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "artifactregistry.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/artifactregistry.googleapis.com",
-            "project": "sara-1-2",
-            "service": "artifactregistry.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "cloudapis.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/cloudapis.googleapis.com",
-            "project": "sara-1-2",
-            "service": "cloudapis.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "cloudbuild.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/cloudbuild.googleapis.com",
-            "project": "sara-1-2",
-            "service": "cloudbuild.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "compute.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/compute.googleapis.com",
-            "project": "sara-1-2",
-            "service": "compute.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "config.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/config.googleapis.com",
-            "project": "sara-1-2",
-            "service": "config.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "dns.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/dns.googleapis.com",
-            "project": "sara-1-2",
-            "service": "dns.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "iam.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/iam.googleapis.com",
-            "project": "sara-1-2",
-            "service": "iam.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "run.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/run.googleapis.com",
-            "project": "sara-1-2",
-            "service": "run.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "secretmanager.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/secretmanager.googleapis.com",
-            "project": "sara-1-2",
-            "service": "secretmanager.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "serviceusage.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/serviceusage.googleapis.com",
-            "project": "sara-1-2",
-            "service": "serviceusage.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "sqladmin.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/sqladmin.googleapis.com",
-            "project": "sara-1-2",
-            "service": "sqladmin.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "storage-api.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/storage-api.googleapis.com",
-            "project": "sara-1-2",
-            "service": "storage-api.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        },
-        {
-          "index_key": "storage.googleapis.com",
-          "schema_version": 0,
-          "attributes": {
-            "disable_dependent_services": true,
-            "disable_on_destroy": false,
-            "id": "sara-1-2/storage.googleapis.com",
-            "project": "sara-1-2",
-            "service": "storage.googleapis.com",
-            "timeouts": null
-          },
-          "sensitive_attributes": [],
-          "identity_schema_version": 0,
-          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjoxMjAwMDAwMDAwMDAwLCJkZWxldGUiOjEyMDAwMDAwMDAwMDAsInJlYWQiOjYwMDAwMDAwMDAwMCwidXBkYXRlIjoxMjAwMDAwMDAwMDAwfX0="
-        }
-      ]
-    },
-    {
-      "module": "module.project-services",
-      "mode": "managed",
-      "type": "google_project_service_identity",
-      "name": "project_service_identities",
-      "provider": "provider[\"registry.terraform.io/hashicorp/google-beta\"]",
-      "instances": []
-    }
-  ],
-  "check_results": [
-    {
-      "object_kind": "var",
-      "config_addr": "var.database_type",
-      "status": "pass",
-      "objects": [
-        {
-          "object_addr": "var.database_type",
-          "status": "pass"
-        }
-      ]
-    }
-  ]
-}
- 
---- End of File: "C:\Users\just_\sara-v2\terraform.tfstate.backup" --- 
+WARNING: "C:\Users\just_\sara-v2\terraform.tfstate.backup" is not a valid file or directory. Skipping. 
  
 ================================================================= 
 Processing path: "C:\Users\just_\sara-v2\terraform.tfvars" 
@@ -2513,7 +986,22 @@ variable "database_type" {
     error_message = "Must be \"alloydb\", \"mysql\", \"postgresql\" or \"spanner\"."
   }
 }
- 
+
+variable "db_user" {
+  description = "The username for the Cloud SQL database user."
+  type        = string
+}
+
+variable "db_pass" {
+  description = "The password for the Cloud SQL database user."
+  type        = string
+  sensitive   = true
+}
+
+variable "db_name" {
+  description = "The name of the Cloud SQL database."
+  type        = string
+} 
 --- End of File: "C:\Users\just_\sara-v2\variables.tf" --- 
  
 ================================================================= 
@@ -2530,7 +1018,7 @@ Processing path: "C:\Users\just_\sara-v2\versions.tf"
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -2544,11 +1032,11 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 6.9"
+      version = "~> 5.0"
     }
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = "~> 6.9"
+      version = "~> 5.0"
     }
     random = {
       source  = "hashicorp/random"
@@ -2566,13 +1054,16 @@ terraform {
       source  = "hashicorp/http"
       version = "~> 3.4"
     }
+    postgresql = {
+      source  = "cyrilgdn/postgresql"
+      version = "~> 1.22.0"
+    }
   }
 
   provider_meta "google" {
     module_name = "blueprints/terraform/terraform-genai-rag/v0.2.1"
   }
-}
- 
+} 
 --- End of File: "C:\Users\just_\sara-v2\versions.tf" --- 
  
 ================================================================= 
@@ -2618,25 +1109,11 @@ Processing path: "C:\Users\just_\sara-v2\scripts\run_migrations.sh"
 #!/bin/bash
 set -e
 
-# This script runs database migrations using Alembic.
-# It uses the Cloud SQL Auth Proxy to securely connect to the database.
-
-echo "--- Starting Cloud SQL Auth Proxy ---"
-# Start the proxy in the background using v2.x syntax
-./cloud-sql-proxy "${DB_PROJECT}:${DB_REGION}:${DB_INSTANCE}" --address=0.0.0.0 --port=5432 &
-PROXY_PID=$!
-
-# Wait 5 seconds for the proxy to establish a connection
-sleep 5
-
-echo "--- Running Alembic migrations ---"
-alembic -c src/retrieval_service/alembic.ini upgrade head
-
-echo "--- Migrations completed successfully ---"
-
-# Stop the proxy
-kill $PROXY_PID
- 
+# The only job of this script is to run the upgrade.
+# The proxy is now handled by cloudbuild.yaml.
+echo "Running database migrations..."
+alembic upgrade head
+echo "Migrations complete." 
 --- End of File: "C:\Users\just_\sara-v2\scripts\run_migrations.sh" --- 
  
 ================================================================= 
@@ -2661,31 +1138,7 @@ Processing path: "C:\Users\just_\sara-v2\src\retrieval_service"
 Processing path: "C:\Users\just_\sara-v2\src\storage.tf" 
 ================================================================= 
  
-"C:\Users\just_\sara-v2\src\storage.tf" is a file. Printing its content... 
- 
---- File: "C:\Users\just_\sara-v2\src\storage.tf" --- 
-# Filename: storage.tf
-
-resource "google_storage_bucket" "sara_vault" {
-  # Bucket names must be globally unique, so we use the project ID as a prefix.
-  name          = "${var.project_id}-sara-documents-vault"
-  location      = var.region
-  project       = var.project_id
-  
-  # Enforces uniform access control, a security best practice.
-  uniform_bucket_level_access = true
-
-  # Deletes incomplete uploads after 1 day to keep the bucket clean.
-  lifecycle_rule {
-    action {
-      type = "AbortIncompleteMultipartUpload"
-    }
-    condition {
-      days_since_initiation = 1
-    }
-  }
-} 
---- End of File: "C:\Users\just_\sara-v2\src\storage.tf" --- 
+WARNING: "C:\Users\just_\sara-v2\src\storage.tf" is not a valid file or directory. Skipping. 
  
 ================================================================= 
 Processing path: "C:\Users\just_\sara-v2\src\docs\SARA_Roadmap.md" 
@@ -3251,7 +1704,7 @@ truncate_slug_length = 40
 # The database URL. This is correct as you had it.
 #sqlalchemy.url = postgresql+psycopg2://${DB_USER}:${DB_PASS}@/${DB_NAME}?host=/cloudsql/${PROJECT_ID}:${REGION}:${DB_INSTANCE}
 #sqlalchemy.url = sqlite:///alembic.db
-sqlalchemy.url = postgresql+psycopg2://${DB_USER}:${DB_PASS}@/${DB_NAME}?host=/cloudsql/${PROJECT_ID}:${REGION}:${DB_INSTANCE}
+#sqlalchemy.url = postgresql+psycopg2://${DB_USER}:${DB_PASS}@/${DB_NAME}?host=/cloudsql/${PROJECT_ID}:${REGION}:${DB_INSTANCE}
 
 [post_write_hooks]
 # post_write_hooks defines scripts or Python functions that are run
@@ -7672,7 +6125,24 @@ if config.config_file_name is not None:
 
 # Set our model's metadata for 'autogenerate' support.
 target_metadata = Base.metadata
+# ADD THIS BLOCK to dynamically configure the database URL
+import os
+from sqlalchemy.engine.url import URL
 
+# Construct the database URL from environment variables
+# Cloud Build will set these variables for us.
+db_url = URL.create(
+    drivername="postgresql+psycopg2",
+    username=os.environ.get("DB_USER"),
+    password=os.environ.get("DB_PASS"),
+    database=os.environ.get("DB_NAME"),
+    host=os.environ.get("DB_HOST", "127.0.0.1"), # Defaults to localhost for proxy
+    port=os.environ.get("DB_PORT", 5432)
+)
+
+# Get the existing config section and update the URL
+config.set_main_option('sqlalchemy.url', db_url.render_as_string(hide_password=False))
+# END OF BLOCK
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
