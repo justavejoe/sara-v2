@@ -1,7 +1,8 @@
 # Filename: storage.tf
 
 # This now correctly defines the application's data vault as a
-# resource that Terraform will create and manage.
+# resource that Terraform will create and manage. This is separate
+# from the Terraform state bucket.
 resource "google_storage_bucket" "sara_vault" {
   name          = "${var.project_id}-sara-documents-vault"
   location      = var.region
