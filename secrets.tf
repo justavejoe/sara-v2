@@ -25,11 +25,10 @@ resource "google_secret_manager_secret" "cloud_sql_password" {
   project   = module.project-services.project_id
   secret_id = "sara-cloud-sql-password-${random_id.id.hex}"
 
-  replication {
-    automatic = true
-  }
+  # The replication block has been removed. "Automatic" is now the default.
+  # This makes the resource compatible with the latest provider version.
 
-  labels = var.labels
+  labels     = var.labels
   depends_on = [module.project-services]
 }
 
