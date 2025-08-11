@@ -135,3 +135,4 @@ substitutions:
 # Specify the logging option
 options:
   logging: CLOUD_LOGGING_ONLY
+  
