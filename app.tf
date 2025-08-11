@@ -50,7 +50,6 @@ resource "google_storage_bucket_iam_member" "data_vault_access" {
   member = "serviceAccount:${google_service_account.runsa.email}"
 }
 
-
 # Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
   name     = "retrieval-service"
@@ -66,7 +65,6 @@ resource "google_cloud_run_v2_service" "retrieval_service" {
       image = "${var.region}-docker.pkg.dev/${var.project_id}/sara-repo/sara-retrieval-service:latest"
       env {
         name  = "GCS_BUCKET_NAME"
-        # FINAL FIX: This now correctly references the data source.
         value = data.google_storage_bucket.sara_vault.name
       }
       env {
@@ -126,7 +124,7 @@ resource "google_cloud_run_v2_service_iam_member" "retrieval_service_invoker" {
 
 # Sets the frontend service to be publicly accessible
 resource "google_cloud_run_v2_service_iam_member" "noauth_frontend" {
-  project  = google_cloud_run_v2_service.frontend_service.project
+  project  = google_cloud_run_v2__service.frontend_service.project
   location = google_cloud_run_v2_service.frontend_service.location
   name     = google_cloud_run_v2_service.frontend_service.name
   role     = "roles/run.invoker"
