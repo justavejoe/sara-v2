@@ -25,11 +25,15 @@ resource "google_secret_manager_secret" "cloud_sql_password" {
   project   = module.project-services.project_id
   secret_id = "sara-cloud-sql-password-${random_id.id.hex}"
 
-  # FINAL FIX: This adds the required 'replication' block with the
-  # 'automatic' block inside it, which is the correct syntax for the
-  # latest provider versions.
+  # FINAL, DEFINITIVE FIX: This restores the correct user_managed replication
+  # block, ensuring the secret is created in the same region as the app.
+  # This syntax is required by your specific provider versions.
   replication {
-    automatic {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   labels     = var.labels
