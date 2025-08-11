@@ -50,6 +50,7 @@ resource "google_storage_bucket_iam_member" "data_vault_access" {
   member = "serviceAccount:${google_service_account.runsa.email}"
 }
 
+
 # Deploys the retrieval-service backend
 resource "google_cloud_run_v2_service" "retrieval_service" {
   name     = "retrieval-service"
@@ -124,7 +125,8 @@ resource "google_cloud_run_v2_service_iam_member" "retrieval_service_invoker" {
 
 # Sets the frontend service to be publicly accessible
 resource "google_cloud_run_v2_service_iam_member" "noauth_frontend" {
-  project  = google_cloud_run_v2__service.frontend_service.project
+  # FINAL FIX: Corrected the typo from two underscores to one.
+  project  = google_cloud_run_v2_service.frontend_service.project
   location = google_cloud_run_v2_service.frontend_service.location
   name     = google_cloud_run_v2_service.frontend_service.name
   role     = "roles/run.invoker"
