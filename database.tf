@@ -14,19 +14,6 @@
  * limitations under the License.
  */
 
-# This block is required to configure the PostgreSQL provider.
-# It tells the provider how to connect to the Cloud SQL instance
-# by using the Cloud SQL Auth Proxy. It depends on the service
-# account that Terraform is running as having the 'Cloud SQL Client' role.
-provider "postgresql" {
-  host            = google_sql_database_instance.main[0].private_ip_address
-  port            = 5432
-  username        = var.db_user
-  password        = var.db_pass
-  sslmode         = "disable"
-  connect_timeout = 15
-}
-
 # Handle Database Instance
 resource "google_sql_database_instance" "main" {
   count = var.database_type == "postgresql" ? 1 : 0
@@ -36,15 +23,21 @@ resource "google_sql_database_instance" "main" {
   region           = var.region
   project          = var.project_id
 
+  timeouts {
+    create = "30m"
+    update = "30m"
+  }
+
   settings {
-    tier              = "db-custom-1-3840" # 1 CPU, 3.75GB Memory
+    tier              = "db-custom-1-3840"
     disk_autoresize   = true
     disk_size         = 10
     disk_type         = "PD_SSD"
     user_labels       = var.labels
     ip_configuration {
       ipv4_enabled    = false
-      private_network = module.project-services.service_networking_network # Connect to the private network
+      # CORRECTED: Point to the actual network resource ID from network.tf
+      private_network = google_compute_network.default.id
     }
     database_flags {
       name  = "cloudsql.iam_authentication"
@@ -53,6 +46,8 @@ resource "google_sql_database_instance" "main" {
   }
 
   deletion_protection = var.deletion_protection
+  # CORRECTED: Explicitly depend on the service networking connection being ready.
+  depends_on = [google_service_networking_connection.private_service_access]
 }
 
 # Create Database
@@ -60,7 +55,7 @@ resource "google_sql_database" "database" {
   count = var.database_type == "postgresql" ? 1 : 0
 
   project         = var.project_id
-  name            = var.db_name # Use the variable from Cloud Build
+  name            = var.db_name
   instance        = google_sql_database_instance.main[0].name
   deletion_policy = "ABANDON"
 }
@@ -69,10 +64,10 @@ resource "google_sql_database" "database" {
 resource "google_sql_user" "service" {
   count = var.database_type == "postgresql" ? 1 : 0
 
-  name            = var.db_user # Use the variable from Cloud Build
+  name            = var.db_user
   project         = var.project_id
   instance        = google_sql_database_instance.main[0].name
-  password        = random_password.password.result # Correctly reference the password resource
+  password        = random_password.password.result
   deletion_policy = "ABANDON"
 }
 
@@ -83,18 +78,4 @@ resource "google_project_iam_member" "vertex_integration" {
   project = var.project_id
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_sql_database_instance.main[0].service_account_email_address}"
-}
-
-# Grant necessary permissions to the database user
-resource "postgresql_grant" "sara_user_grant" {
-  count = var.database_type == "postgresql" ? 1 : 0
-
-  database    = google_sql_database.database[0].name # Correctly reference the database resource
-  role        = google_sql_user.service[0].name      # Correctly reference the user resource
-  schema      = "public"
-  object_type = "schema"
-  privileges  = ["CREATE", "USAGE"]
-  
-  # Ensure this runs after the user has been created
-  depends_on = [google_sql_user.service]
 }
