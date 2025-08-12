@@ -14,29 +14,12 @@
  * limitations under the License.
  */
 
-# Handle Database Instance
-resource "google_sql_database_instance" "main" {
+# COMBINED: This single resource now creates and configures the database instance.
+resource "google_sql_database_instance" "main_configured" {
+  # This "count" meta-argument makes the resource conditional on the database_type variable.
   count = var.database_type == "postgresql" ? 1 : 0
 
   name             = "sara-db-instance"
-  database_version = "POSTGRES_15"
-  region           = var.region
-  project          = var.project_id
-
-  # We create the instance with minimal settings first.
-  # The detailed settings are applied in a subsequent step.
-  settings {
-    tier = "db-n1-standard-1" # Start with a basic tier
-  }
-
-  deletion_protection = var.deletion_protection
-}
-
-# Apply the final settings in a separate step to avoid the API error
-resource "google_sql_database_instance" "main_configured" {
-  count = var.database_type == "postgresql" ? 1 : 0
-
-  name             = google_sql_database_instance.main[0].name
   database_version = "POSTGRES_15"
   region           = var.region
   project          = var.project_id
@@ -57,9 +40,12 @@ resource "google_sql_database_instance" "main_configured" {
     }
   }
 
-  # Ensure this happens only after the initial instance is created
-  depends_on = [google_sql_database_instance.main, google_service_networking_connection.private_service_access]
+  deletion_protection = var.deletion_protection
+
+  # This explicitly tells Terraform to wait until the private networking is ready.
+  depends_on = [google_service_networking_connection.private_service_access]
 }
+
 
 # Create Database
 resource "google_sql_database" "database" {
