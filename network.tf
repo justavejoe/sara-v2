@@ -47,12 +47,12 @@ resource "google_compute_forwarding_rule" "default" {
   count = var.database_type == "postgresql" ? 1 : 0
 
   project               = var.project_id
-  name                  = "psc-forwarding-rule-${google_sql_database_instance.main[0].name}"
+  name                  = "psc-forwarding-rule-${google_sql_database_instance.main_configured[0].name}"
   region                = var.region
   network               = google_compute_network.main.id
   ip_address            = google_compute_address.default.self_link
   load_balancing_scheme = ""
-  target                = google_sql_database_instance.main[0].psc_service_attachment_link
+  target                = google_sql_database_instance.main_configured[0].psc_service_attachment_link
 }
 
 # # Create DNS Zone for PSC
@@ -61,8 +61,8 @@ resource "google_dns_managed_zone" "psc" {
   count = var.database_type == "postgresql" ? 1 : 0
 
   project     = var.project_id
-  name        = "${google_sql_database_instance.main[0].name}-${random_id.id.hex}-zone"
-  dns_name    = "${google_sql_database_instance.main[0].region}.sql.goog."
+  name        = "${google_sql_database_instance.main_configured[0].name}-${random_id.id.hex}-zone"
+  dns_name    = "${google_sql_database_instance.main_configured[0].region}.sql.goog."
   description = "Regional zone for Cloud SQL PSC instances"
   visibility  = "private"
   private_visibility_config {
@@ -78,7 +78,7 @@ resource "google_dns_record_set" "psc" {
   count = var.database_type == "postgresql" ? 1 : 0
 
   project      = var.project_id
-  name         = google_sql_database_instance.main[0].dns_name
+  name         = google_sql_database_instance.main_configured[0].dns_name
   type         = "A"
   ttl          = 300
   managed_zone = google_dns_managed_zone.psc[0].name
@@ -103,6 +103,11 @@ resource "google_service_networking_connection" "private_service_access" {
   network                 = google_compute_network.main.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
+
+  # Add a timeout to allow the peering operation more time to complete.
+  timeouts {
+    create = "15m"
+  }
 
   depends_on = [google_project_service.service_networking]
 }
